@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"database/sql"
@@ -20,7 +21,7 @@ import (
 	"time"
 )
 
-func checkErr(err error) {
+func check(err error) {
 	if err != nil {
 		panic(err)
 	}
@@ -194,6 +195,26 @@ type result struct {
 	Path    string
 }
 
+type repoItemExtra struct {
+	IndexFilePath string
+}
+
+type repoItem struct {
+	SourceId string
+	Name     string
+	Title    string
+	Versions []string
+	Revision string
+	Icon     string
+	Icon2x   string
+	Extra    repoItemExtra
+	Id       string
+}
+
+type postItem struct {
+	Id string
+}
+
 func Munge(s string) string {
 	res := strings.ToLower(s)
 	res = strings.Replace(res, "::", ".", -1)
@@ -292,7 +313,7 @@ func MakeSearchServer(index, indexMunged, paths []string) func(*websocket.Conn) 
 						indices[bestIndex] += 1
 						bestRes.QueryId = curQuery
 						js, err := json.Marshal(bestRes)
-						checkErr(err)
+						check(err)
 						ws.Write([]byte(js))
 						returned += 1
 					}
@@ -303,6 +324,46 @@ func MakeSearchServer(index, indexMunged, paths []string) func(*websocket.Conn) 
 			}
 		}
 	}
+}
+
+func extractDocs(name string, f io.Reader) {
+	gz, err := gzip.NewReader(f)
+	check(err)
+
+	tr := tar.NewReader(gz)
+
+	db, err := sql.Open("sqlite3", name+".zealdocset")
+	check(err)
+
+	db.Exec("DROP TABLE files")
+	db.Exec("CREATE TABLE files(path, blob)")
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		check(err)
+
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+
+		var buf = make([]byte, hdr.Size)
+		io.ReadFull(tr, buf)
+
+		var gzBlob bytes.Buffer
+		zw := gzip.NewWriter(&gzBlob)
+		_, err = zw.Write(buf)
+		check(err)
+		check(zw.Close())
+
+		_, err = db.Exec(
+			"INSERT INTO files(path, blob) values(?, ?)", hdr.Name, gzBlob.Bytes())
+		check(err)
+	}
+
+	db.Close()
 }
 
 func extractFile(db *sql.DB, path string, w io.Writer) error {
@@ -327,9 +388,9 @@ func extractFile(db *sql.DB, path string, w io.Writer) error {
 	}
 }
 
-func importRows(db *sql.DB, all, allMunged, paths *[]string) {
+func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) {
 	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table'")
-	checkErr(err)
+	check(err)
 
 	var col string
 	var path string
@@ -358,14 +419,14 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string) {
 	}
 
 	rows, err = db.Query("select name, path FROM searchIndex")
-	checkErr(err)
+	check(err)
 
 	for rows.Next() {
 		err = rows.Scan(&col, &path)
-		checkErr(err)
+		check(err)
 		*all = append(*all, col)
 		*allMunged = append(*allMunged, Munge(col))
-		*paths = append(*paths, "AngularJS.docset/Contents/Resources/Documents/"+path)
+		*paths = append(*paths, docsetName+"/Contents/Resources/Documents/"+path)
 	}
 }
 
@@ -374,49 +435,117 @@ func main() {
 	var all []string
 	var allMunged []string
 	var paths []string
+	kapeliNames := make(map[string]string)
+	var docsetNames []string
+	var docsetDbs []*sql.DB
 
 	var db *sql.DB
 	var err error
-	if len(os.Args) > 1 && os.Args[1] == "all" {
-		prefix := "/home/jkozera/Downloads/docs/"
-		files, err := ioutil.ReadDir(prefix)
-		checkErr(err)
 
-		for _, f := range files {
-			name := f.Name()
-			if !strings.HasSuffix(name, ".dsidx") {
-				continue
-			}
+	files, err := ioutil.ReadDir(".")
+	check(err)
 
-			db, err = sql.Open("sqlite3", prefix+name)
-			checkErr(err)
-
-			importRows(db, &all, &allMunged, &paths)
+	for _, f := range files {
+		name := f.Name()
+		if !strings.HasSuffix(name, ".zealdocset") {
+			continue
 		}
-	} else {
-		db, err = sql.Open("sqlite3", "convert/AngularJS.zealdocset")
-		checkErr(err)
+
+		db, err = sql.Open("sqlite3", name)
+		check(err)
 		f, err := os.Create("/tmp/zealdb")
-		checkErr(err)
-		checkErr(extractFile(db, "AngularJS.docset/Contents/Resources/docSet.dsidx", f))
+		check(err)
+		docsetName := strings.Replace(name, ".zealdocset", ".docset", 1)
+		check(extractFile(db, docsetName+"/Contents/Resources/docSet.dsidx", f))
+		docsetNames = append(docsetNames, docsetName)
+		docsetDbs = append(docsetDbs, db)
 		f.Close()
 
 		db2, err := sql.Open("sqlite3", "/tmp/zealdb")
-		importRows(db2, &all, &allMunged, &paths)
+		importRows(db2, &all, &allMunged, &paths, docsetName)
 	}
 
 	fmt.Println(len(all))
 
 	http.Handle("/", http.FileServer(http.Dir("./html")))
-	http.HandleFunc("/AngularJS.docset/", func(w http.ResponseWriter, r *http.Request) {
-		if extractFile(db, r.URL.Path[1:], w) != nil {
-			w.WriteHeader(404)
-			w.Write([]byte("404"))
+	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[{\"name\": \"api.zealdocs.org\", \"id\": 1}]"))
+	})
+	http.HandleFunc("/index/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/repos") {
+			indexId, err := strconv.Atoi(r.URL.Path[len("/index/") : len(r.URL.Path)-len("/repos")])
+			if err == nil && indexId == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte("[{\"name\": \"com.kapeli\", \"id\": 1}]"))
+				return
+			}
+		}
+		w.WriteHeader(404)
+	})
+	http.HandleFunc("/repo/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/items") {
+			repoId, err := strconv.Atoi(r.URL.Path[len("/repo/") : len(r.URL.Path)-len("/items")])
+			if err == nil && repoId == 1 {
+				res, err := http.Get("http://api.zealdocs.org/v1/docsets")
+				if err == nil {
+					w.Header().Set("Content-Type", "application/json")
+					body, err := ioutil.ReadAll(res.Body)
+					if err != nil {
+						w.WriteHeader(500)
+						w.Write([]byte(err.Error()))
+					} else {
+						var items []repoItem
+						json.Unmarshal(body, &items)
+						for _, item := range items {
+							kapeliNames[item.Id] = item.Name
+						}
+						w.Write(body)
+					}
+
+					return
+				} else {
+					w.WriteHeader(500)
+					w.Write([]byte(err.Error()))
+					return
+				}
+			}
+		}
+		w.WriteHeader(404)
+	})
+
+	http.HandleFunc("/item", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			var item postItem
+			body, err := ioutil.ReadAll(r.Body)
+			if err == nil {
+				err = json.Unmarshal(body, &item)
+			}
+			var resp *http.Response
+			if err == nil {
+				resp, err = http.Get("https://go.zealdocs.org:443/d/com.kapeli/" + kapeliNames[item.Id] + "/latest")
+			}
+			if err == nil {
+				extractDocs(kapeliNames[item.Id], resp.Body)
+				w.Write([]byte(kapeliNames[item.Id]))
+			}
+			if err != nil {
+				w.WriteHeader(500)
+				w.Write([]byte(err.Error()))
+			}
 		}
 	})
+	for i, name := range docsetNames {
+		http.HandleFunc("/"+name+"/", func(w http.ResponseWriter, r *http.Request) {
+			if extractFile(docsetDbs[i], r.URL.Path[1:], w) != nil {
+				w.WriteHeader(404)
+				w.Write([]byte("404"))
+			}
+		})
+	}
 	http.Handle("/search", websocket.Handler(MakeSearchServer(all, allMunged, paths)))
 	err = http.ListenAndServe(":12340", nil)
-	checkErr(err)
+	check(err)
 
 	start := time.Now()
 	var res []string
