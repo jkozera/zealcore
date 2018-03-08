@@ -1,0 +1,58 @@
+# Group Items
+Group of all item-related resources.
+
+
+
+## Local Items [/item]
+
+### Retrieve a list of Local Items [GET]
+
++ Response 200 (application/json)
+
+    [{'name': 'C++'}]
+
+### Add to list of downloadable Items [POST]
+
++ Response 204
+
+## Docset Index [/index]
+
+
+### Retrieve a list of Indices [GET]
+
++ Response 200 (application/json)
+    [{url: 'api.zealdocs.org', id: 1}]
+
+### Add index [POST]
+
++ Parameters
+    + url (string)
+
++ Response 201 (id)
+
+## Docset Index per id [/index/{id}]
+
+### Delete index [DELETE]
+
++ Paremeters name
++ Response 204
++ Response 405 (Not allowed)
+
+## Docset Index per id Update [/index/{id}/update]
+
+### Update index [POST]
++ Response 204
+
+## Docset Index per id Repos [/index/{id}/repos]
+
+### Retrieve a list of Repos [GET]
+
++ Response 200 (application/json)
+    [{name: "com.kapeli", id: 1}]
+
+## Repo Items [/repo/{id}/items]
+
+### Retrieve a list of Items [GET]
+
++ Response 200 (application/json)
+    [{name, title, version}, ... ]
