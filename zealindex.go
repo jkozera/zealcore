@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -326,17 +327,59 @@ func MakeSearchServer(index, indexMunged, paths []string) func(*websocket.Conn) 
 	}
 }
 
-func extractDocs(name string, f io.Reader) {
+type gzJob struct {
+	Hdr  *tar.Header
+	toGz []byte
+}
+
+type gzRes struct {
+	Hdr *tar.Header
+	gz  []byte
+}
+
+func extractDocs(title string, f io.Reader) {
 	gz, err := gzip.NewReader(f)
 	check(err)
 
 	tr := tar.NewReader(gz)
 
-	db, err := sql.Open("sqlite3", name+".zealdocset")
+	db, err := sql.Open("sqlite3", title+".zealdocset")
 	check(err)
 
 	db.Exec("DROP TABLE files")
 	db.Exec("CREATE TABLE files(path, blob)")
+
+	threads := runtime.NumCPU()
+	toGzChan := make(chan gzJob, threads)
+	toWriteChan := make(chan gzRes, threads)
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < threads; i += 1 {
+		go (func() {
+			for {
+				toGz := <-toGzChan
+				var gzBlob bytes.Buffer
+				zw := gzip.NewWriter(&gzBlob)
+				_, err = zw.Write(toGz.toGz)
+				check(err)
+				check(zw.Close())
+				wg.Add(1)
+				toWriteChan <- gzRes{toGz.Hdr, gzBlob.Bytes()}
+				wg.Done()
+			}
+		})()
+	}
+
+	go (func() {
+		for {
+			toWrite := <-toWriteChan
+			_, err = db.Exec(
+				"INSERT INTO files(path, blob) values(?, ?)", toWrite.Hdr.Name, toWrite.gz)
+			check(err)
+			wg.Done()
+		}
+	})()
 
 	for {
 		hdr, err := tr.Next()
@@ -350,18 +393,14 @@ func extractDocs(name string, f io.Reader) {
 		}
 
 		var buf = make([]byte, hdr.Size)
-		io.ReadFull(tr, buf)
-
-		var gzBlob bytes.Buffer
-		zw := gzip.NewWriter(&gzBlob)
-		_, err = zw.Write(buf)
+		_, err = io.ReadFull(tr, buf)
 		check(err)
-		check(zw.Close())
 
-		_, err = db.Exec(
-			"INSERT INTO files(path, blob) values(?, ?)", hdr.Name, gzBlob.Bytes())
-		check(err)
+		wg.Add(1)
+		toGzChan <- gzJob{hdr, buf}
 	}
+
+	wg.Wait()
 
 	db.Close()
 }
@@ -436,6 +475,7 @@ func main() {
 	var allMunged []string
 	var paths []string
 	kapeliNames := make(map[string]string)
+	kapeliTitles := make(map[string]string)
 	var docsetNames []string
 	var docsetDbs []*sql.DB
 
@@ -499,6 +539,7 @@ func main() {
 						json.Unmarshal(body, &items)
 						for _, item := range items {
 							kapeliNames[item.Id] = item.Name
+							kapeliTitles[item.Id] = item.Title
 						}
 						w.Write(body)
 					}
@@ -526,7 +567,7 @@ func main() {
 				resp, err = http.Get("https://go.zealdocs.org:443/d/com.kapeli/" + kapeliNames[item.Id] + "/latest")
 			}
 			if err == nil {
-				extractDocs(kapeliNames[item.Id], resp.Body)
+				extractDocs(kapeliTitles[item.Id], resp.Body)
 				w.Write([]byte(kapeliNames[item.Id]))
 			}
 			if err != nil {
