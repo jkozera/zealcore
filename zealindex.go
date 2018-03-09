@@ -415,8 +415,8 @@ func extractFile(db *sql.DB, path string, w io.Writer) error {
 		if err != nil {
 			return err
 		} else {
-			io.Copy(w, gz)
-			return nil
+			_, err = io.Copy(w, gz)
+			return err
 		}
 	} else {
 		if err != nil {
@@ -493,7 +493,7 @@ func main() {
 
 		db, err = sql.Open("sqlite3", name)
 		check(err)
-		f, err := os.Create("/tmp/zealdb")
+		f, err := ioutil.TempFile("", "zealdb")
 		check(err)
 		docsetName := strings.Replace(name, ".zealdocset", ".docset", 1)
 		check(extractFile(db, docsetName+"/Contents/Resources/docSet.dsidx", f))
@@ -501,9 +501,14 @@ func main() {
 		docsetDbs = append(docsetDbs, db)
 		f.Close()
 
-		db2, err := sql.Open("sqlite3", "/tmp/zealdb")
-		importRows(db2, &all, &allMunged, &paths, docsetName)
-		db2.Close()
+		db2, err := sql.Open("sqlite3", f.Name())
+		if err == nil {
+			importRows(db2, &all, &allMunged, &paths, docsetName)
+			db2.Close()
+		}
+		fmt.Println(f.Name())
+		os.Remove(f.Name())
+		check(err)
 	}
 
 	fmt.Println(len(all))
