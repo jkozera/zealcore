@@ -78,11 +78,9 @@
                     lastQuery = queryId;
 
                     if (title === undefined) {
-                        console.log(m.data);
                         var title = m.data.split(";", 2)[1];
                         var score = " ";
                         var path = " ";
-                        console.log(title)
                         if (title.indexOf(' | score=') != -1) {
                             title = title.split(' | score=');
                             score = title[1];
@@ -90,7 +88,6 @@
                         }
                     }
                     results.push({title: title, score: ""+score, path: path});
-                    console.log(results)
                 }
                 app1.set("results", results);
             } else {

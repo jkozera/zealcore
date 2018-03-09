@@ -422,7 +422,7 @@ func extractFile(db *sql.DB, path string, w io.Writer) error {
 		if err != nil {
 			return err
 		} else {
-			return errors.New("not found")
+			return errors.New("not found: " + path)
 		}
 	}
 }
@@ -577,12 +577,15 @@ func main() {
 		}
 	})
 	for i, name := range docsetNames {
-		http.HandleFunc("/"+name+"/", func(w http.ResponseWriter, r *http.Request) {
-			if extractFile(docsetDbs[i], r.URL.Path[1:], w) != nil {
-				w.WriteHeader(404)
-				w.Write([]byte("404"))
-			}
-		})
+		(func(i int) {
+			http.HandleFunc("/"+name+"/", func(w http.ResponseWriter, r *http.Request) {
+				err := extractFile(docsetDbs[i], r.URL.Path[1:], w)
+				if err != nil {
+					w.WriteHeader(404)
+					w.Write([]byte(err.Error()))
+				}
+			})
+		})(i)
 	}
 	http.Handle("/search", websocket.Handler(MakeSearchServer(all, allMunged, paths)))
 	err = http.ListenAndServe(":12340", nil)
