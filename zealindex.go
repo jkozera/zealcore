@@ -503,6 +503,7 @@ func main() {
 
 		db2, err := sql.Open("sqlite3", "/tmp/zealdb")
 		importRows(db2, &all, &allMunged, &paths, docsetName)
+		db2.Close()
 	}
 
 	fmt.Println(len(all))
