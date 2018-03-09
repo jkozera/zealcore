@@ -61,7 +61,6 @@
         ws.onmessage = function(m) {
             if (results.length < 15) {
                 if (m.data != " ") {
-
                     var queryId, title, score, path;
                     try {
                         var goData = JSON.parse(m.data);
@@ -90,8 +89,6 @@
                     results.push({title: title, score: ""+score, path: path});
                 }
                 app1.set("results", results);
-            } else {
-                ws.send("XXXXXXXXXXXXXXXXXXXXXXXXXXXBREAK")
             }
         }
         document.getElementById("search").focus();
