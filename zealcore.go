@@ -186,6 +186,7 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 
 	var col string
 	var path string
+	var fragment string
 	hasSearchIndex := false
 	for rows.Next() {
 		err = rows.Scan(&col)
@@ -195,7 +196,7 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 	}
 
 	if !hasSearchIndex {
-		db.Exec("CREATE VIEW IF NOT EXISTS searchIndex AS" +
+		db.Exec("CREATE VIEW IF NOT EXISTS searchIndexView AS" +
 			"  SELECT" +
 			"    ztokenname AS name," +
 			"    ztypename AS type," +
@@ -208,17 +209,25 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 			"    ON ztokenmetainformation.zfile = zfilepath.z_pk" +
 			"  INNER JOIN ztokentype" +
 			"    ON ztoken.ztokentype = ztokentype.z_pk")
+	} else {
+		db.Exec("CREATE VIEW IF NOT EXISTS searchIndexView AS" +
+			"  SELECT" +
+			"    name, type, path, '' AS fragment" +
+			"  FROM searchIndex")
 	}
 
-	rows, err = db.Query("select name, path FROM searchIndex")
+	rows, err = db.Query("select name, path, coalesce(fragment, '') FROM searchIndexView")
 	check(err)
 
 	for rows.Next() {
-		err = rows.Scan(&col, &path)
+		err = rows.Scan(&col, &path, &fragment)
 		check(err)
 		*all = append(*all, col)
 		*allMunged = append(*allMunged, zealindex.Munge(col))
-		*paths = append(*paths, docsetName+"/Contents/Resources/Documents/"+path)
+		if fragment != "" {
+			fragment = "#" + fragment
+		}
+		*paths = append(*paths, docsetName+"/Contents/Resources/Documents/"+path+fragment)
 	}
 }
 
