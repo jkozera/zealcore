@@ -189,23 +189,34 @@ func extractDocs(title string, f io.Reader, size int64, downloadProgressHandlers
 	downloadProgressHandlers.Lock.RUnlock()
 }
 
-func extractFile(db *sql.DB, path string, w io.Writer) error {
-	res, err := db.Query("SELECT blob FROM files WHERE path = ?", path)
+func extractFile(dbName string, path string, w io.Writer) error {
+	db, err := sql.Open("sqlite3", dbName)
+	var res *sql.Rows
+	if err == nil {
+		res, err = db.Query("SELECT blob FROM files WHERE path = ?", path)
+	}
 	if err == nil && res.Next() {
 		var blob []byte
 		res.Scan(&blob)
 		buf := bytes.NewBuffer(blob)
 		gz, err := gzip.NewReader(buf)
 		if err != nil {
+			res.Close()
+			db.Close()
 			return err
 		} else {
 			_, err = io.Copy(w, gz)
+			res.Close()
+			db.Close()
 			return err
 		}
 	} else {
 		if err != nil {
+			db.Close()
 			return err
 		} else {
+			res.Close()
+			db.Close()
 			return errors.New("not found: " + path)
 		}
 	}
@@ -284,10 +295,9 @@ func main() {
 	kapeliNames := make(map[string]string)
 	kapeliTitles := make(map[string]string)
 	var docsetNames []string
-	var docsetDbs []*sql.DB
+	var docsetDbs []string
 
 	var cache *sql.DB
-	var db *sql.DB
 	var err error
 
 
@@ -304,20 +314,18 @@ func main() {
 			continue
 		}
 
-		db, err = sql.Open("sqlite3", name)
-		check(err)
 		f, err := ioutil.TempFile("", "zealdb")
 		check(err)
 		docsetName := strings.Replace(name, ".zealdocset", ".docset", 1)
-		check(extractFile(db, docsetName+"/Contents/Resources/docSet.dsidx", f))
+		check(extractFile(name, docsetName+"/Contents/Resources/docSet.dsidx", f))
 		docsetNames = append(docsetNames, docsetName)
-		docsetDbs = append(docsetDbs, db)
+		docsetDbs = append(docsetDbs, name)
 		f.Close()
 
-		db2, err := sql.Open("sqlite3", f.Name())
+		db, err := sql.Open("sqlite3", f.Name())
 		if err == nil {
-			importRows(db2, &all, &allMunged, &paths, docsetName)
-			db2.Close()
+			importRows(db, &all, &allMunged, &paths, docsetName)
+			db.Close()
 		}
 		os.Remove(f.Name())
 		check(err)
