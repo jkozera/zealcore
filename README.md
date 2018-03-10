@@ -21,4 +21,4 @@ $ ./download_docset.sh AngularJS
 
 This should create a `.zealdocset` file in your current directory.
 
-After it's done (which can take long time for large docsets), go to http://localhost:12340/ to test search.
+After it's done (which can take long time for large docsets), go to http://localhost:12340/html/ to test search.
