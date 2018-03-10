@@ -304,6 +304,7 @@ func main() {
 	cache, err = sql.Open("sqlite3", "zealcore_cache.sqlite3")
 	check(err)
 	cache.Exec("CREATE TABLE IF NOT EXISTS kv (key, value)")
+	cache.Exec("CREATE TABLE IF NOT EXISTS installed_docs (id, name, json)")
 
 	files, err := ioutil.ReadDir(".")
 	check(err)
@@ -411,6 +412,8 @@ func main() {
 			if err == nil {
 				go (func() {
 					extractDocs(kapeliItems[item.Id].Title, resp.Body, resp.ContentLength, downloadProgressHandlers)
+					json, _ := json.Marshal(kapeliItems[item.Id])
+					cache.Exec("INSERT INTO installed_docs(id, name, json) VALUES (?, ?, ?)", kapeliItems[item.Id].Id, kapeliItems[item.Id].Name, string(json))
 				})()
 				w.Write([]byte(kapeliItems[item.Id].Name))
 			}
@@ -419,8 +422,18 @@ func main() {
 				w.Write([]byte(err.Error()))
 			}
 		} else {
-			w.Header().Set("Content-Type", "application/json")
-			b, _ := json.Marshal(docsetNames)
+			var items []repoItem
+			var item repoItem
+			rows, err := cache.Query("SELECT json FROM installed_docs")
+			check(err)
+			var rawJson []byte
+			for rows.Next() {
+				err = rows.Scan(&rawJson)
+				json.Unmarshal(rawJson, &item)
+				items = append(items, item)
+			}
+			rows.Close()
+			b, _ := json.Marshal(items)
 			w.Write(b)
 		}
 	})
