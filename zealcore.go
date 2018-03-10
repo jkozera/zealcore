@@ -286,8 +286,14 @@ func main() {
 	var docsetNames []string
 	var docsetDbs []*sql.DB
 
+	var cache *sql.DB
 	var db *sql.DB
 	var err error
+
+
+	cache, err = sql.Open("sqlite3", "zealcore_cache.sqlite3")
+	check(err)
+	cache.Exec("CREATE TABLE IF NOT EXISTS kv (key, value)")
 
 	files, err := ioutil.ReadDir(".")
 	check(err)
@@ -339,6 +345,15 @@ func main() {
 		if strings.HasSuffix(r.URL.Path, "/items") {
 			repoId, err := strconv.Atoi(r.URL.Path[len("/repo/") : len(r.URL.Path)-len("/items")])
 			if err == nil && repoId == 1 {
+				key := "repo.com.kapeli.items"
+				dbRes, err := cache.Query("SELECT value FROM kv WHERE key=?", key)
+				if err == nil && dbRes.Next() {
+					var value []byte
+					dbRes.Scan(&value)
+					w.Header().Set("Content-Type", "application/json")
+					w.Write(value)
+					return
+				}
 				res, err := http.Get("http://api.zealdocs.org/v1/docsets")
 				if err == nil {
 					w.Header().Set("Content-Type", "application/json")
@@ -354,8 +369,8 @@ func main() {
 							kapeliTitles[item.Id] = item.Title
 						}
 						w.Write(body)
+						cache.Exec("INSERT INTO kv (key, value) VALUES (?, ?)", key, body)
 					}
-
 					return
 				} else {
 					w.WriteHeader(500)
