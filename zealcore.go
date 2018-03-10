@@ -236,6 +236,7 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 			hasSearchIndex = true
 		}
 	}
+	rows.Close()
 
 	if !hasSearchIndex {
 		db.Exec("CREATE VIEW IF NOT EXISTS searchIndexView AS" +
@@ -271,6 +272,7 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 		}
 		*paths = append(*paths, docsetName+"/Contents/Resources/Documents/"+path+fragment)
 	}
+	rows.Close()
 }
 
 type progressHandlers struct {
@@ -360,8 +362,10 @@ func main() {
 					dbRes.Scan(&value)
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(value)
+					dbRes.Close()
 					return
 				}
+				dbRes.Close()
 				res, err := http.Get("http://api.zealdocs.org/v1/docsets")
 				if err == nil {
 					w.Header().Set("Content-Type", "application/json")
