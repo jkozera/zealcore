@@ -91,8 +91,8 @@ type gzRes struct {
 }
 
 type ReaderWithProgress struct {
-    underlyingReader io.Reader
-    readIndex *int64
+	underlyingReader io.Reader
+	readIndex        *int64
 }
 
 func NewReaderWithProgress(underlying io.Reader) ReaderWithProgress {
@@ -172,7 +172,7 @@ func extractDocs(title string, f io.Reader, size int64, downloadProgressHandlers
 		for _, v := range downloadProgressHandlers.Map {
 			progress := 100 * *progressReader.readIndex / size
 			if progress > 99 {
-				progress = 99  // don't send 100% until the db is closed
+				progress = 99 // don't send 100% until the db is closed
 			}
 			v(title, progress)
 		}
@@ -276,7 +276,7 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 }
 
 type progressHandlers struct {
-	Map map[int]func(string, int64)
+	Map  map[int]func(string, int64)
 	Lock sync.RWMutex
 }
 
@@ -285,7 +285,7 @@ func NewProgressHandlers() progressHandlers {
 }
 
 type progressReport struct {
-	Docset string
+	Docset   string
 	Progress int64
 }
 
@@ -294,14 +294,12 @@ func main() {
 	var all []string
 	var allMunged []string
 	var paths []string
-	kapeliNames := make(map[string]string)
-	kapeliTitles := make(map[string]string)
+	kapeliItems := make(map[string]repoItem)
 	var docsetNames []string
 	var docsetDbs []string
 
 	var cache *sql.DB
 	var err error
-
 
 	cache, err = sql.Open("sqlite3", "zealcore_cache.sqlite3")
 	check(err)
@@ -360,6 +358,11 @@ func main() {
 				if err == nil && dbRes.Next() {
 					var value []byte
 					dbRes.Scan(&value)
+					var items []repoItem
+					json.Unmarshal(value, &items)
+					for _, item := range items {
+						kapeliItems[item.Id] = item
+					}
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(value)
 					dbRes.Close()
@@ -377,8 +380,7 @@ func main() {
 						var items []repoItem
 						json.Unmarshal(body, &items)
 						for _, item := range items {
-							kapeliNames[item.Id] = item.Name
-							kapeliTitles[item.Id] = item.Title
+							kapeliItems[item.Id] = item
 						}
 						w.Write(body)
 						cache.Exec("INSERT INTO kv (key, value) VALUES (?, ?)", key, body)
@@ -404,18 +406,22 @@ func main() {
 			}
 			var resp *http.Response
 			if err == nil {
-				resp, err = http.Get("https://go.zealdocs.org:443/d/com.kapeli/" + kapeliNames[item.Id] + "/latest")
+				resp, err = http.Get("https://go.zealdocs.org:443/d/com.kapeli/" + kapeliItems[item.Id].Name + "/latest")
 			}
 			if err == nil {
 				go (func() {
-					extractDocs(kapeliTitles[item.Id], resp.Body, resp.ContentLength, downloadProgressHandlers)
+					extractDocs(kapeliItems[item.Id].Title, resp.Body, resp.ContentLength, downloadProgressHandlers)
 				})()
-				w.Write([]byte(kapeliNames[item.Id]))
+				w.Write([]byte(kapeliItems[item.Id].Name))
 			}
 			if err != nil {
 				w.WriteHeader(500)
 				w.Write([]byte(err.Error()))
 			}
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			b, _ := json.Marshal(docsetNames)
+			w.Write(b)
 		}
 	})
 	for i, name := range docsetNames {
@@ -453,7 +459,8 @@ func main() {
 		downloadProgressHandlers.Lock.Unlock()
 
 		input := make([]byte, 1024)
-		for _, err := ws.Read(input); err == nil; _, err = ws.Read(input) {}
+		for _, err := ws.Read(input); err == nil; _, err = ws.Read(input) {
+		}
 
 		downloadProgressHandlers.Lock.Lock()
 		delete(downloadProgressHandlers.Map, curDownloadHandler)
