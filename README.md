@@ -7,7 +7,7 @@ $ go build
 $ ./zealcore
 ```
 
-And in separate terminal, to download some docset (requires the `jq` tool to be installed):
+And in separate terminal, to download some docset (requires the `jq` tool and NodeJS to be installed):
 
 ```
 $ ./download_docset.sh [docsetname]

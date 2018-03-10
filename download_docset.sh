@@ -1,6 +1,11 @@
 #!/bin/bash
 
+set -e
+
 if [ "$1" == "" ]; then echo Please pass a docset name as an argument.; exit 1; fi
+
+[ -d wscat ] || git clone https://github.com/websockets/wscat.git
+cd wscat ; npm i ; cd ..
 
 ID=$(curl http://localhost:12340/repo/1/items | jq -r ".[] | select(.name==\"$1\") | .id, .title")
 
@@ -16,11 +21,6 @@ ID=$(echo $ID | cut -d ' ' -f 1)
 echo Found $1 with id = $ID, title = $TITLE. Downloading...
 curl -vvv http://localhost:12340/item -d '{"id": "'$ID'"}' &
 
-while [ "$(jobs -pr)" != "" ]; do
-	echo "Progress update - waiting for GET to finish (proper progress reporting mechanism TBD):"
-	ls -lh "$TITLE.zealdocset"
-	echo
-	sleep 2s
-done
+node wscat/bin/wscat -o http://localhost/ --connect ws://localhost:12340/download_progress
 
 echo "Success! Now restart zealcore to be able to search this docset."

@@ -90,8 +90,25 @@ type gzRes struct {
 	gz  []byte
 }
 
-func extractDocs(title string, f io.Reader) {
-	gz, err := gzip.NewReader(f)
+type ReaderWithProgress struct {
+    underlyingReader io.Reader
+    readIndex *int64
+}
+
+func NewReaderWithProgress(underlying io.Reader) ReaderWithProgress {
+	progress := int64(0)
+	return ReaderWithProgress{underlying, &progress}
+}
+
+func (r ReaderWithProgress) Read(p []byte) (n int, err error) {
+	n, err = r.underlyingReader.Read(p)
+	*r.readIndex += int64(n)
+	return n, err
+}
+
+func extractDocs(title string, f io.Reader, size int64, downloadProgressHandlers progressHandlers) {
+	progressReader := NewReaderWithProgress(f)
+	gz, err := gzip.NewReader(progressReader)
 	check(err)
 
 	tr := tar.NewReader(gz)
@@ -148,14 +165,28 @@ func extractDocs(title string, f io.Reader) {
 		var buf = make([]byte, hdr.Size)
 		_, err = io.ReadFull(tr, buf)
 		check(err)
-
 		wg.Add(1)
 		toGzChan <- gzJob{hdr, buf}
+
+		downloadProgressHandlers.Lock.RLock()
+		for _, v := range downloadProgressHandlers.Map {
+			progress := 100 * *progressReader.readIndex / size
+			if progress > 99 {
+				progress = 99  // don't send 100% until the db is closed
+			}
+			v(title, progress)
+		}
+		downloadProgressHandlers.Lock.RUnlock()
 	}
 
 	wg.Wait()
-
 	db.Close()
+
+	downloadProgressHandlers.Lock.RLock()
+	for _, v := range downloadProgressHandlers.Map {
+		v(title, 100)
+	}
+	downloadProgressHandlers.Lock.RUnlock()
 }
 
 func extractFile(db *sql.DB, path string, w io.Writer) error {
@@ -229,6 +260,20 @@ func importRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 		}
 		*paths = append(*paths, docsetName+"/Contents/Resources/Documents/"+path+fragment)
 	}
+}
+
+type progressHandlers struct {
+	Map map[int]func(string, int64)
+	Lock sync.RWMutex
+}
+
+func NewProgressHandlers() progressHandlers {
+	return progressHandlers{make(map[int]func(string, int64)), sync.RWMutex{}}
+}
+
+type progressReport struct {
+	Docset string
+	Progress int64
 }
 
 func main() {
@@ -322,6 +367,7 @@ func main() {
 		w.WriteHeader(404)
 	})
 
+	downloadProgressHandlers := NewProgressHandlers()
 	http.HandleFunc("/item", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
 			var item postItem
@@ -334,7 +380,9 @@ func main() {
 				resp, err = http.Get("https://go.zealdocs.org:443/d/com.kapeli/" + kapeliNames[item.Id] + "/latest")
 			}
 			if err == nil {
-				extractDocs(kapeliTitles[item.Id], resp.Body)
+				go (func() {
+					extractDocs(kapeliTitles[item.Id], resp.Body, resp.ContentLength, downloadProgressHandlers)
+				})()
 				w.Write([]byte(kapeliNames[item.Id]))
 			}
 			if err != nil {
@@ -355,6 +403,35 @@ func main() {
 		})(i)
 	}
 	http.Handle("/search", websocket.Handler(MakeSearchServer(all, allMunged, paths)))
+	lastDownloadHandler := 0
+
+	http.Handle("/download_progress", websocket.Handler(func(ws *websocket.Conn) {
+		lastDownloadHandler += 1
+		curDownloadHandler := lastDownloadHandler
+		lastProgresses := make(map[string]int64)
+		handler := func(docset string, progress int64) {
+			if lastProgresses[docset] != progress {
+				lastProgresses[docset] = progress
+				data, err := json.Marshal(progressReport{docset, progress})
+				if progress == 100 {
+					ws.Close()
+				}
+				if err == nil {
+					ws.Write(data)
+				}
+			}
+		}
+		downloadProgressHandlers.Lock.Lock()
+		downloadProgressHandlers.Map[curDownloadHandler] = handler
+		downloadProgressHandlers.Lock.Unlock()
+
+		input := make([]byte, 1024)
+		for _, err := ws.Read(input); err == nil; _, err = ws.Read(input) {}
+
+		downloadProgressHandlers.Lock.Lock()
+		delete(downloadProgressHandlers.Map, curDownloadHandler)
+		downloadProgressHandlers.Lock.Unlock()
+	}))
 	err = http.ListenAndServe(":12340", nil)
 	check(err)
 }
