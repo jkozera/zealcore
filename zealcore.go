@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zealdocs/zealcore/zealindex"
@@ -43,10 +44,10 @@ type postItem struct {
 	Id string
 }
 
-func MakeSearchServer(index, indexMunged, paths []string) func(*websocket.Conn) {
+func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
 	return func(ws *websocket.Conn) {
 		lastQuery := 0
-		searcher := zealindex.NewSearcher(index, indexMunged, paths, &lastQuery)
+		searcher := zealindex.NewSearcher(index, &lastQuery)
 
 		input := make([]byte, 1024)
 		for _, err := ws.Read(input); err == nil; _, err = ws.Read(input) {
@@ -79,22 +80,12 @@ type progressReport struct {
 	Progress int64
 }
 
-func main() {
-
+func createGlobalIndex() (idx zealindex.GlobalIndex, names, dbs []string) {
 	var all []string
 	var allMunged []string
 	var paths []string
-	kapeliItems := make(map[string]repoItem)
 	var docsetNames []string
 	var docsetDbs []string
-
-	var cache *sql.DB
-	var err error
-
-	cache, err = sql.Open("sqlite3", "zealcore_cache.sqlite3")
-	check(err)
-	cache.Exec("CREATE TABLE IF NOT EXISTS kv (key, value)")
-	cache.Exec("CREATE TABLE IF NOT EXISTS installed_docs (id, name, json)")
 
 	files, err := ioutil.ReadDir(".")
 	check(err)
@@ -124,7 +115,27 @@ func main() {
 
 	fmt.Println(len(all))
 
-	http.Handle("/", http.FileServer(http.Dir("./html")))
+	return zealindex.GlobalIndex{&all, &allMunged, &paths, sync.RWMutex{}}, docsetNames, docsetDbs
+}
+
+func main() {
+	kapeliItems := make(map[string]repoItem)
+
+	var index zealindex.GlobalIndex
+	var docsetNames []string
+	var docsetDbs []string
+
+	var cache *sql.DB
+	var err error
+
+	cache, err = sql.Open("sqlite3", "zealcore_cache.sqlite3")
+	check(err)
+	cache.Exec("CREATE TABLE IF NOT EXISTS kv (key, value)")
+	cache.Exec("CREATE TABLE IF NOT EXISTS installed_docs (id, name, json)")
+
+	index, docsetNames, docsetDbs = createGlobalIndex()
+
+	http.Handle("/html/", http.FileServer(http.Dir(".")))
 	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[{\"name\": \"api.zealdocs.org\", \"id\": 1}]"))
@@ -204,6 +215,9 @@ func main() {
 					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.ContentLength, downloadProgressHandlers)
 					json, _ := json.Marshal(kapeliItems[item.Id])
 					cache.Exec("INSERT INTO installed_docs(id, name, json) VALUES (?, ?, ?)", kapeliItems[item.Id].Id, kapeliItems[item.Id].Name, string(json))
+					newIndex, newDocsetNames, newDocsetDbs := createGlobalIndex()
+					docsetNames, docsetDbs = newDocsetNames, newDocsetDbs
+					index.UpdateWith(&newIndex)
 				})()
 				w.Write([]byte(kapeliItems[item.Id].Name))
 			}
@@ -227,18 +241,8 @@ func main() {
 			w.Write(b)
 		}
 	})
-	for i, name := range docsetNames {
-		(func(i int) {
-			http.HandleFunc("/"+name+"/", func(w http.ResponseWriter, r *http.Request) {
-				err := zealindex.ExtractFile(docsetDbs[i], r.URL.Path[1:], w)
-				if err != nil {
-					w.WriteHeader(404)
-					w.Write([]byte(err.Error()))
-				}
-			})
-		})(i)
-	}
-	http.Handle("/search", websocket.Handler(MakeSearchServer(all, allMunged, paths)))
+
+	http.Handle("/search", websocket.Handler(MakeSearchServer(&index)))
 	lastDownloadHandler := 0
 
 	http.Handle("/download_progress", websocket.Handler(func(ws *websocket.Conn) {
@@ -269,6 +273,25 @@ func main() {
 		delete(downloadProgressHandlers.Map, curDownloadHandler)
 		downloadProgressHandlers.Lock.Unlock()
 	}))
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		found := false
+		for i, name := range docsetNames {
+			if strings.HasPrefix(r.URL.Path, "/"+name+"/") {
+				err := zealindex.ExtractFile(docsetDbs[i], r.URL.Path[1:], w)
+				if err != nil {
+					w.WriteHeader(404)
+					w.Write([]byte(err.Error()))
+				}
+				found = true
+			}
+		}
+		if !found {
+			w.WriteHeader(404)
+			w.Write([]byte("Not found."))
+		}
+	})
+
 	err = http.ListenAndServe(":12340", nil)
 	check(err)
 }

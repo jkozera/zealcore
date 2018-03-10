@@ -23,4 +23,4 @@ curl -vvv http://localhost:12340/item -d '{"id": "'$ID'"}' &
 
 node wscat/bin/wscat -o http://localhost/ --connect ws://localhost:12340/download_progress
 
-echo "Success! Now restart zealcore to be able to search this docset."
+echo "Success!"

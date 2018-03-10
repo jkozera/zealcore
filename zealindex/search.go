@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -183,16 +184,29 @@ type Result struct {
 	Path    string
 }
 
-type searcher struct {
-	index       []string
-	indexMunged []string
-	paths       []string
-	lastQuery   *int
-	curQuery    int
+type GlobalIndex struct {
+	All       *[]string
+	AllMunged *[]string
+	Paths     *[]string
+	Lock      sync.RWMutex
 }
 
-func NewSearcher(index, indexMunged, paths []string, lastQuery *int) searcher {
-	return searcher{index, indexMunged, paths, lastQuery, 0}
+func (i *GlobalIndex) UpdateWith(i2 *GlobalIndex) {
+	(*i).Lock.Lock()
+	(*i).All = (*i2).All
+	(*i).AllMunged = (*i2).AllMunged
+	(*i).Paths = (*i2).Paths
+	(*i).Lock.Unlock()
+}
+
+type searcher struct {
+	index     *GlobalIndex
+	lastQuery *int
+	curQuery  int
+}
+
+func NewSearcher(index *GlobalIndex, lastQuery *int) searcher {
+	return searcher{index, lastQuery, 0}
 }
 
 func CompareRes(a, b Result) bool {
@@ -214,22 +228,28 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 
 	resChan := make(chan []Result, threads)
 
+	index := *self.index
+	index.Lock.RLock()
+
 	for cpu := 0; cpu < threads; cpu++ {
+		all := *index.All
+		allMunged := *index.AllMunged
+		paths := *index.Paths
 		go (func(cpu int) {
 			var res []Result
-			i0 := cpu * len(self.indexMunged) / threads
-			i1 := (cpu + 1) * len(self.indexMunged) / threads
-			for i, s := range self.indexMunged[i0:i1] {
+			i0 := cpu * len(all) / threads
+			i1 := (cpu + 1) * len(allMunged) / threads
+			for i, s := range allMunged[i0:i1] {
 				if *self.lastQuery != curQuery {
 					break
 				}
 				exactIndex := strings.Index(s, qMunged)
 				if exactIndex != -1 {
-					res = append(res, Result{-1, scoreExact(exactIndex, len(qMunged), s) + 100, self.index[i0+i], self.paths[i0+i]})
+					res = append(res, Result{-1, scoreExact(exactIndex, len(qMunged), s) + 100, all[i0+i], paths[i0+i]})
 				} else {
 					start, length := matchFuzzy(qMunged, s)
 					if start != -1 {
-						res = append(res, Result{-1, scoreFuzzy(s, start, length), self.index[i0+i], self.paths[i0+i]})
+						res = append(res, Result{-1, scoreFuzzy(s, start, length), all[i0+i], paths[i0+i]})
 					}
 				}
 			}
@@ -248,6 +268,8 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 		res[cpu] = <-resChan
 		sum += len(res[cpu])
 	}
+	index.Lock.RUnlock()
+
 	indices := make([]int, threads)
 
 	returned := 0
