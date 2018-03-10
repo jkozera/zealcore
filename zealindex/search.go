@@ -177,18 +177,27 @@ func matchFuzzy(needle string, haystack string) (start, length int) {
 	return start, length
 }
 
+type DocsetIcons struct {
+	Icon   string
+	Icon2x string
+}
+
 type Result struct {
-	QueryId int
-	Score   int
-	Res     string
-	Path    string
+	QueryId    int
+	Score      int
+	Res        string
+	Path       string
+	DocsetName string
 }
 
 type GlobalIndex struct {
-	All       *[]string
-	AllMunged *[]string
-	Paths     *[]string
-	Lock      sync.RWMutex
+	All         *[]string
+	AllMunged   *[]string
+	Paths       *[]string
+	Docsets     *[]int
+	DocsetNames []string
+	DocsetIcons map[string]DocsetIcons
+	Lock        sync.RWMutex
 }
 
 func (i *GlobalIndex) UpdateWith(i2 *GlobalIndex) {
@@ -196,6 +205,9 @@ func (i *GlobalIndex) UpdateWith(i2 *GlobalIndex) {
 	(*i).All = (*i2).All
 	(*i).AllMunged = (*i2).AllMunged
 	(*i).Paths = (*i2).Paths
+	(*i).Docsets = (*i2).Docsets
+	(*i).DocsetNames = (*i2).DocsetNames
+	(*i).DocsetIcons = (*i2).DocsetIcons
 	(*i).Lock.Unlock()
 }
 
@@ -235,6 +247,8 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 		all := *index.All
 		allMunged := *index.AllMunged
 		paths := *index.Paths
+		nums := *index.Docsets
+		names := index.DocsetNames
 		go (func(cpu int) {
 			var res []Result
 			i0 := cpu * len(all) / threads
@@ -245,11 +259,11 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 				}
 				exactIndex := strings.Index(s, qMunged)
 				if exactIndex != -1 {
-					res = append(res, Result{-1, scoreExact(exactIndex, len(qMunged), s) + 100, all[i0+i], paths[i0+i]})
+					res = append(res, Result{-1, scoreExact(exactIndex, len(qMunged), s) + 100, all[i0+i], paths[i0+i], names[nums[i0+i]]})
 				} else {
 					start, length := matchFuzzy(qMunged, s)
 					if start != -1 {
-						res = append(res, Result{-1, scoreFuzzy(s, start, length), all[i0+i], paths[i0+i]})
+						res = append(res, Result{-1, scoreFuzzy(s, start, length), all[i0+i], paths[i0+i], names[nums[i0+i]]})
 					}
 				}
 			}
@@ -278,7 +292,7 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 			break
 		}
 		bestIndex := -1
-		bestRes := Result{-1, -999999, "", ""}
+		bestRes := Result{-1, -999999, "", "", ""}
 		for i := 0; i < threads; i++ {
 			if indices[i] < len(res[i]) {
 				if CompareRes(res[i][indices[i]], bestRes) {

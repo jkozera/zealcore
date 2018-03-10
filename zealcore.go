@@ -80,16 +80,18 @@ type progressReport struct {
 	Progress int64
 }
 
-func createGlobalIndex() (idx zealindex.GlobalIndex, names, dbs []string) {
+func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 	var all []string
 	var allMunged []string
 	var paths []string
+	var docsets []int
 	var docsetNames []string
 	var docsetDbs []string
 
 	files, err := ioutil.ReadDir(".")
 	check(err)
 
+	i := 0
 	for _, f := range files {
 		name := f.Name()
 		if !strings.HasSuffix(name, ".zealdocset") {
@@ -100,29 +102,30 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, names, dbs []string) {
 		check(err)
 		docsetName := strings.Replace(name, ".zealdocset", ".docset", 1)
 		check(zealindex.ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx", f))
-		docsetNames = append(docsetNames, docsetName)
+		docsetNames = append(docsetNames, strings.Replace(docsetName, ".docset", "", 1))
 		docsetDbs = append(docsetDbs, name)
 		f.Close()
 
 		db, err := sql.Open("sqlite3", f.Name())
 		if err == nil {
-			zealindex.ImportRows(db, &all, &allMunged, &paths, docsetName)
+			zealindex.ImportRows(db, &all, &allMunged, &paths, &docsets, docsetName, i)
 			db.Close()
 		}
 		os.Remove(f.Name())
 		check(err)
+		i += 1
 	}
 
 	fmt.Println(len(all))
 
-	return zealindex.GlobalIndex{&all, &allMunged, &paths, sync.RWMutex{}}, docsetNames, docsetDbs
+	return zealindex.GlobalIndex{&all, &allMunged, &paths, &docsets, docsetNames, nil, sync.RWMutex{}}, docsetDbs
 }
 
 func main() {
 	kapeliItems := make(map[string]repoItem)
+	docsetIcons := make(map[string]zealindex.DocsetIcons)
 
 	var index zealindex.GlobalIndex
-	var docsetNames []string
 	var docsetDbs []string
 
 	var cache *sql.DB
@@ -133,7 +136,18 @@ func main() {
 	cache.Exec("CREATE TABLE IF NOT EXISTS kv (key, value)")
 	cache.Exec("CREATE TABLE IF NOT EXISTS installed_docs (id, name, json)")
 
-	index, docsetNames, docsetDbs = createGlobalIndex()
+	rows, _ := cache.Query("SELECT json FROM installed_docs")
+	for rows.Next() {
+		var data []byte
+		var item repoItem
+		rows.Scan(&data)
+		json.Unmarshal(data, &item)
+		docsetIcons[item.Name] = zealindex.DocsetIcons{item.Icon, item.Icon2x}
+	}
+	rows.Close()
+
+	index, docsetDbs = createGlobalIndex()
+	index.DocsetIcons = docsetIcons
 
 	http.Handle("/html/", http.FileServer(http.Dir(".")))
 	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request) {
@@ -215,8 +229,10 @@ func main() {
 					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.ContentLength, downloadProgressHandlers)
 					json, _ := json.Marshal(kapeliItems[item.Id])
 					cache.Exec("INSERT INTO installed_docs(id, name, json) VALUES (?, ?, ?)", kapeliItems[item.Id].Id, kapeliItems[item.Id].Name, string(json))
-					newIndex, newDocsetNames, newDocsetDbs := createGlobalIndex()
-					docsetNames, docsetDbs = newDocsetNames, newDocsetDbs
+					newIndex, newDocsetDbs := createGlobalIndex()
+					docsetDbs = newDocsetDbs
+					docsetIcons[kapeliItems[item.Id].Name] = zealindex.DocsetIcons{kapeliItems[item.Id].Icon, kapeliItems[item.Id].Icon2x}
+					newIndex.DocsetIcons = docsetIcons
 					index.UpdateWith(&newIndex)
 				})()
 				w.Write([]byte(kapeliItems[item.Id].Name))
@@ -276,8 +292,8 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		found := false
-		for i, name := range docsetNames {
-			if strings.HasPrefix(r.URL.Path, "/"+name+"/") {
+		for i, name := range index.DocsetNames {
+			if strings.HasPrefix(r.URL.Path, "/"+name+".docset/") {
 				err := zealindex.ExtractFile(docsetDbs[i], r.URL.Path[1:], w)
 				if err != nil {
 					w.WriteHeader(404)

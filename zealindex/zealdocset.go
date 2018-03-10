@@ -162,7 +162,7 @@ func ExtractFile(dbName string, path string, w io.Writer) error {
 	}
 }
 
-func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) {
+func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, docsetName string, docsetNum int) {
 	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table'")
 	check(err)
 
@@ -207,6 +207,7 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsetName string) 
 		check(err)
 		*all = append(*all, col)
 		*allMunged = append(*allMunged, Munge(col))
+		*docsets = append(*docsets, docsetNum)
 		if fragment != "" {
 			fragment = "#" + fragment
 		}
