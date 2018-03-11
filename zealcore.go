@@ -79,7 +79,8 @@ func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
 
 type progressReport struct {
 	Docset   string
-	Progress int64
+	Received int64
+	Total    int64
 }
 
 func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
@@ -123,6 +124,32 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 	return zealindex.GlobalIndex{&all, &allMunged, &paths, &docsets, docsetNames, nil, sync.RWMutex{}}, docsetDbs
 }
 
+const REPOKEY = "repo.com.kapeli.items"
+
+func getRepo(cacheDB *sql.DB) []byte {
+	dbRes, err := cacheDB.Query("SELECT value FROM kv WHERE key=?", REPOKEY)
+	if err == nil && dbRes.Next() {
+		var value []byte
+		dbRes.Scan(&value)
+
+		dbRes.Close()
+		return value
+	}
+	dbRes.Close()
+	return make([]byte, 0)
+}
+
+func updateRepo(cacheDb *sql.DB, kapeliItems *map[string]repoItem) {
+	repo := getRepo(cacheDb)
+	if len(repo) != 0 {
+		var items []repoItem
+		json.Unmarshal(repo, &items)
+		for _, item := range items {
+			(*kapeliItems)[item.Id] = item
+		}
+	}
+}
+
 func main() {
 	kapeliItems := make(map[string]repoItem)
 	docsetIcons := make(map[string]zealindex.DocsetIcons)
@@ -137,6 +164,8 @@ func main() {
 	check(err)
 	cache.Exec("CREATE TABLE IF NOT EXISTS kv (key, value)")
 	cache.Exec("CREATE TABLE IF NOT EXISTS installed_docs (id, name, json)")
+
+	updateRepo(cache, &kapeliItems)
 
 	rows, _ := cache.Query("SELECT json FROM installed_docs")
 	for rows.Next() {
@@ -171,22 +200,12 @@ func main() {
 		if strings.HasSuffix(r.URL.Path, "/items") {
 			repoId, err := strconv.Atoi(r.URL.Path[len("/repo/") : len(r.URL.Path)-len("/items")])
 			if err == nil && repoId == 1 {
-				key := "repo.com.kapeli.items"
-				dbRes, err := cache.Query("SELECT value FROM kv WHERE key=?", key)
-				if err == nil && dbRes.Next() {
-					var value []byte
-					dbRes.Scan(&value)
-					var items []repoItem
-					json.Unmarshal(value, &items)
-					for _, item := range items {
-						kapeliItems[item.Id] = item
-					}
+				repo := getRepo(cache)
+				if len(repo) != 0 {
 					w.Header().Set("Content-Type", "application/json")
-					w.Write(value)
-					dbRes.Close()
+					w.Write(repo)
 					return
 				}
-				dbRes.Close()
 				res, err := http.Get("http://api.zealdocs.org/v1/docsets")
 				if err == nil {
 					w.Header().Set("Content-Type", "application/json")
@@ -195,13 +214,9 @@ func main() {
 						w.WriteHeader(500)
 						w.Write([]byte(err.Error()))
 					} else {
-						var items []repoItem
-						json.Unmarshal(body, &items)
-						for _, item := range items {
-							kapeliItems[item.Id] = item
-						}
 						w.Write(body)
-						cache.Exec("INSERT INTO kv (key, value) VALUES (?, ?)", key, body)
+						cache.Exec("INSERT INTO kv (key, value) VALUES (?, ?)", REPOKEY, body)
+						updateRepo(cache, &kapeliItems)
 					}
 					return
 				} else {
@@ -224,11 +239,11 @@ func main() {
 			}
 			var resp *http.Response
 			if err == nil {
-				resp, err = http.Get("https://go.zealdocs.org:443/d/com.kapeli/" + kapeliItems[item.Id].Name + "/latest")
+				resp, err = http.Get("https://go.zealdocs.org/d/com.kapeli/" + kapeliItems[item.Id].Name + "/latest")
 			}
 			if err == nil {
 				go (func() {
-					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.ContentLength, downloadProgressHandlers)
+					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
 					json, _ := json.Marshal(kapeliItems[item.Id])
 					cache.Exec("INSERT INTO installed_docs(id, name, json) VALUES (?, ?, ?)", kapeliItems[item.Id].Id, kapeliItems[item.Id].Name, string(json))
 					newIndex, newDocsetDbs := createGlobalIndex()
@@ -267,15 +282,15 @@ func main() {
 		lastDownloadHandler += 1
 		curDownloadHandler := lastDownloadHandler
 		lastProgresses := make(map[string]int64)
-		handler := func(docset string, progress int64) {
-			if lastProgresses[docset] != progress {
-				lastProgresses[docset] = progress
-				data, err := json.Marshal(progressReport{docset, progress})
-				if progress == 100 {
-					ws.Close()
-				}
+		handler := func(docset string, received int64, total int64) {
+			if lastProgresses[docset] != received {
+				lastProgresses[docset] = received
+				data, err := json.Marshal(progressReport{docset, received, total})
 				if err == nil {
 					ws.Write(data)
+				}
+				if received >= total {
+					ws.Close()
 				}
 			}
 		}

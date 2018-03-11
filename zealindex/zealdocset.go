@@ -12,11 +12,11 @@ import (
 )
 
 func NewProgressHandlers() progressHandlers {
-	return progressHandlers{make(map[int]func(string, int64)), sync.RWMutex{}}
+	return progressHandlers{make(map[int]func(string, int64, int64)), sync.RWMutex{}}
 }
 
 type progressHandlers struct {
-	Map  map[int]func(string, int64)
+	Map  map[int]func(string, int64, int64)
 	Lock sync.RWMutex
 }
 
@@ -46,7 +46,7 @@ func (r ReaderWithProgress) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func ExtractDocs(title string, f io.Reader, size int64, downloadProgressHandlers progressHandlers) {
+func ExtractDocs(title string, f io.Reader, contentType string, size int64, downloadProgressHandlers progressHandlers) {
 	progressReader := NewReaderWithProgress(f)
 	gz, err := gzip.NewReader(progressReader)
 	check(err)
@@ -110,11 +110,11 @@ func ExtractDocs(title string, f io.Reader, size int64, downloadProgressHandlers
 
 		downloadProgressHandlers.Lock.RLock()
 		for _, v := range downloadProgressHandlers.Map {
-			progress := 100 * *progressReader.readIndex / size
-			if progress > 99 {
-				progress = 99 // don't send 100% until the db is closed
+			progress := *progressReader.readIndex
+			if progress >= size {
+				progress = size - 1 // don't send 100% until the db is closed
 			}
-			v(title, progress)
+			v(title, progress, size)
 		}
 		downloadProgressHandlers.Lock.RUnlock()
 	}
@@ -124,7 +124,7 @@ func ExtractDocs(title string, f io.Reader, size int64, downloadProgressHandlers
 
 	downloadProgressHandlers.Lock.RLock()
 	for _, v := range downloadProgressHandlers.Map {
-		v(title, 100)
+		v(title, size, size)
 	}
 	downloadProgressHandlers.Lock.RUnlock()
 }
