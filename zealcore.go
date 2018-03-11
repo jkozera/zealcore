@@ -8,8 +8,10 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/net/websocket"
 	"io/ioutil"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -294,6 +296,7 @@ func main() {
 		found := false
 		for i, name := range index.DocsetNames {
 			if strings.HasPrefix(r.URL.Path, "/"+name+".docset/") {
+				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
 				err := zealindex.ExtractFile(docsetDbs[i], r.URL.Path[1:], w)
 				if err != nil {
 					w.WriteHeader(404)
