@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -84,8 +85,11 @@ func ExtractDocs(title string, f io.Reader, contentType string, size int64, down
 	go (func() {
 		for {
 			toWrite := <-toWriteChan
+			// Fixup name for docsets where title != root dir name (like "Lua 5.1" has a "Lua" root dir)
+			name := strings.SplitAfterN(toWrite.Hdr.Name, "/", 2)[1]
+			name = title + ".docset/" + name
 			_, err = db.Exec(
-				"INSERT INTO files(path, blob) values(?, ?)", toWrite.Hdr.Name, toWrite.gz)
+				"INSERT INTO files(path, blob) values(?, ?)", name, toWrite.gz)
 			check(err)
 			wg.Done()
 		}

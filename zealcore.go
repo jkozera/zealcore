@@ -103,8 +103,14 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 
 		f, err := ioutil.TempFile("", "zealdb")
 		check(err)
+		f_shm, err := os.Create(f.Name() + "-shm")
+		check(err)
+		f_wal, err := os.Create(f.Name() + "-wal")
+		check(err)
 		docsetName := strings.Replace(name, ".zealdocset", ".docset", 1)
 		check(zealindex.ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx", f))
+		zealindex.ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-shm", f_shm)
+		zealindex.ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", f_wal)
 		docsetNames = append(docsetNames, strings.Replace(docsetName, ".docset", "", 1))
 		docsetDbs = append(docsetDbs, name)
 		f.Close()
@@ -115,6 +121,8 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 			db.Close()
 		}
 		os.Remove(f.Name())
+		os.Remove(f_shm.Name())
+		os.Remove(f_wal.Name())
 		check(err)
 		i += 1
 	}
