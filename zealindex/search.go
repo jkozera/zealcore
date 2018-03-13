@@ -192,18 +192,20 @@ type Result struct {
 }
 
 type GlobalIndex struct {
-	All         *[]string
-	AllMunged   *[]string
-	Paths       *[]string
-	Docsets     *[]int
-	Types       *[]string
-	DocsetNames []string
-	DocsetIcons map[string]DocsetIcons
-	Lock        sync.RWMutex
+	SymbolCounts *map[string]map[string]int
+	All          *[]string
+	AllMunged    *[]string
+	Paths        *[]string
+	Docsets      *[]int
+	Types        *[]string
+	DocsetNames  []string
+	DocsetIcons  map[string]DocsetIcons
+	Lock         sync.RWMutex
 }
 
 func (i *GlobalIndex) UpdateWith(i2 *GlobalIndex) {
 	(*i).Lock.Lock()
+	(*i).SymbolCounts = (*i2).SymbolCounts
 	(*i).All = (*i2).All
 	(*i).AllMunged = (*i2).AllMunged
 	(*i).Paths = (*i2).Paths

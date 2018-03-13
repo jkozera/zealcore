@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-func mapType(t string) string {
+func MapType(t string) string {
 	typeAliases := map[string]string{
 		"Package Attributes":          "Attribute",
 		"Private Attributes":          "Attribute",
@@ -344,7 +344,7 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, typ
 		*all = append(*all, col)
 		*allMunged = append(*allMunged, Munge(col))
 		*docsets = append(*docsets, docsetNum)
-		*types = append(*types, mapType(tp))
+		*types = append(*types, MapType(tp))
 		if fragment != "" {
 			fragment = "#" + fragment
 		}

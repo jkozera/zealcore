@@ -31,15 +31,16 @@ type repoItemExtra struct {
 }
 
 type repoItem struct {
-	SourceId string
-	Name     string
-	Title    string
-	Versions []string
-	Revision string
-	Icon     string
-	Icon2x   string
-	Extra    repoItemExtra
-	Id       string
+	SourceId     string
+	Name         string
+	Title        string
+	Versions     []string
+	Revision     string
+	Icon         string
+	Icon2x       string
+	Extra        repoItemExtra
+	Id           string
+	SymbolCounts map[string]int
 }
 
 type postItem struct {
@@ -91,6 +92,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 	var types []string
 	var docsetNames []string
 	var docsetDbs []string
+	symbolCounts := make(map[string]map[string]int)
 
 	files, err := ioutil.ReadDir(".")
 	check(err)
@@ -117,8 +119,20 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 		f.Close()
 
 		db, err := sql.Open("sqlite3", f.Name())
+
 		if err == nil {
 			zealindex.ImportRows(db, &all, &allMunged, &paths, &docsets, &types, docsetName, i)
+
+			curCounts := make(map[string]int)
+			dbRes, _ := db.Query("SELECT type, COUNT(*) FROM searchIndexView GROUP BY type")
+			for dbRes.Next() {
+				var tp string
+				var count int
+				dbRes.Scan(&tp, &count)
+				curCounts[zealindex.MapType(tp)] += count
+			}
+			dbRes.Close()
+			symbolCounts[strings.Replace(docsetName, ".docset", "", 1)] = curCounts
 			db.Close()
 		}
 		os.Remove(f.Name())
@@ -130,7 +144,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 
 	fmt.Println(len(all))
 
-	return zealindex.GlobalIndex{&all, &allMunged, &paths, &docsets, &types, docsetNames, nil, sync.RWMutex{}}, docsetDbs
+	return zealindex.GlobalIndex{&symbolCounts, &all, &allMunged, &paths, &docsets, &types, docsetNames, nil, sync.RWMutex{}}, docsetDbs
 }
 
 func getRepo(cacheDB *sql.DB) []repoItem {
@@ -294,12 +308,15 @@ func main() {
 		} else {
 			var items []repoItem
 			var item repoItem
-			rows, err := cache.Query("SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
+			var id string
+			rows, err := cache.Query("SELECT id, json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
 			check(err)
 			var rawJson []byte
 			for rows.Next() {
-				err = rows.Scan(&rawJson)
+				err = rows.Scan(&id, &rawJson)
 				json.Unmarshal(rawJson, &item)
+				item.Id = id
+				item.SymbolCounts = (*index.SymbolCounts)[item.Title]
 				items = append(items, item)
 			}
 			rows.Close()
