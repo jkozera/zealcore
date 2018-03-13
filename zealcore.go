@@ -298,6 +298,12 @@ func main() {
 					docsetIcons[kapeliItems[item.Id].Name] = zealindex.DocsetIcons{kapeliItems[item.Id].Icon, kapeliItems[item.Id].Icon2x}
 					newIndex.DocsetIcons = docsetIcons
 					index.UpdateWith(&newIndex)
+					downloadProgressHandlers.Lock.RLock()
+					// report 100% only after new index is created:
+					for _, v := range downloadProgressHandlers.Map {
+						v(kapeliItems[item.Id].Title, resp.ContentLength, resp.ContentLength)
+					}
+					downloadProgressHandlers.Lock.RUnlock()
 				})()
 				w.Write([]byte(kapeliItems[item.Id].Name))
 			}

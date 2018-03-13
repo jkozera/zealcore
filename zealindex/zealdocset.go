@@ -256,12 +256,6 @@ func ExtractDocs(title string, f io.Reader, contentType string, size int64, down
 
 	wg.Wait()
 	db.Close()
-
-	downloadProgressHandlers.Lock.RLock()
-	for _, v := range downloadProgressHandlers.Map {
-		v(title, size, size)
-	}
-	downloadProgressHandlers.Lock.RUnlock()
 }
 
 func ExtractFile(dbName string, path string, w io.Writer) error {
