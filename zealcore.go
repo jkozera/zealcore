@@ -132,29 +132,52 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 	return zealindex.GlobalIndex{&all, &allMunged, &paths, &docsets, docsetNames, nil, sync.RWMutex{}}, docsetDbs
 }
 
-const REPOKEY = "repo.com.kapeli.items"
-
-func getRepo(cacheDB *sql.DB) []byte {
-	dbRes, err := cacheDB.Query("SELECT value FROM kv WHERE key=?", REPOKEY)
-	if err == nil && dbRes.Next() {
+func getRepo(cacheDB *sql.DB) []repoItem {
+	dbRes, _ := cacheDB.Query("SELECT id, json FROM available_docs")
+	var items []repoItem
+	var item repoItem
+	for dbRes.Next() {
+		var id string
 		var value []byte
-		dbRes.Scan(&value)
-
-		dbRes.Close()
-		return value
+		dbRes.Scan(&id, &value)
+		json.Unmarshal(value, &item)
+		item.Id = id
+		items = append(items, item)
 	}
 	dbRes.Close()
-	return make([]byte, 0)
+	return items
 }
 
-func updateRepo(cacheDb *sql.DB, kapeliItems *map[string]repoItem) {
-	repo := getRepo(cacheDb)
-	if len(repo) != 0 {
-		var items []repoItem
-		json.Unmarshal(repo, &items)
-		for _, item := range items {
-			(*kapeliItems)[item.Id] = item
+func getRepoJson(cacheDb *sql.DB) []byte {
+	items := getRepo(cacheDb)
+	if len(items) > 0 {
+		b, _ := json.Marshal(items)
+		return b
+	} else {
+		return make([]byte, 0)
+	}
+}
+
+func updateRepo(cacheDb *sql.DB, kapeliItems *map[string]repoItem, updateDbFrom []repoItem) {
+	if updateDbFrom != nil {
+		cacheDb.Exec("DROP TABLE available_docs")
+		cacheDb.Exec("CREATE TABLE available_docs (id integer primary key autoincrement, repo_id, name, json)")
+		for _, item := range updateDbFrom {
+			itemJson, _ := json.Marshal(item)
+			dbRes, err := cacheDb.Query("SELECT id FROM available_docs WHERE name = ?", item.Name)
+			if err == nil && dbRes.Next() {
+				var id string
+				dbRes.Scan(&id)
+				cacheDb.Exec("UPDATE available_docs SET json = ? WHERE id = ?", itemJson, id)
+			} else {
+				cacheDb.Exec("INSERT INTO available_docs (repo_id, name, json) VALUES (1, ?, ?)", item.Name, itemJson)
+			}
+			dbRes.Close()
 		}
+	}
+	items := getRepo(cacheDb)
+	for _, item := range items {
+		(*kapeliItems)[item.Id] = item
 	}
 }
 
@@ -171,11 +194,12 @@ func main() {
 	cache, err = sql.Open("sqlite3", "zealcore_cache.sqlite3")
 	check(err)
 	cache.Exec("CREATE TABLE IF NOT EXISTS kv (key, value)")
-	cache.Exec("CREATE TABLE IF NOT EXISTS installed_docs (id, name, json)")
+	cache.Exec("CREATE TABLE IF NOT EXISTS installed_docs (available_doc_id)")
+	cache.Exec("CREATE TABLE IF NOT EXISTS available_docs (id integer primary key autoincrement, repo_id, name, json)")
 
-	updateRepo(cache, &kapeliItems)
+	updateRepo(cache, &kapeliItems, nil)
 
-	rows, _ := cache.Query("SELECT json FROM installed_docs")
+	rows, _ := cache.Query("SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
 	for rows.Next() {
 		var data []byte
 		var item repoItem
@@ -208,8 +232,8 @@ func main() {
 		if strings.HasSuffix(r.URL.Path, "/items") {
 			repoId, err := strconv.Atoi(r.URL.Path[len("/repo/") : len(r.URL.Path)-len("/items")])
 			if err == nil && repoId == 1 {
-				repo := getRepo(cache)
-				if len(repo) != 0 {
+				repo := getRepoJson(cache)
+				if len(repo) > 0 {
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(repo)
 					return
@@ -222,9 +246,10 @@ func main() {
 						w.WriteHeader(500)
 						w.Write([]byte(err.Error()))
 					} else {
-						w.Write(body)
-						cache.Exec("INSERT INTO kv (key, value) VALUES (?, ?)", REPOKEY, body)
-						updateRepo(cache, &kapeliItems)
+						var items []repoItem
+						json.Unmarshal(body, &items)
+						updateRepo(cache, &kapeliItems, items)
+						w.Write(getRepoJson(cache))
 					}
 					return
 				} else {
@@ -252,8 +277,7 @@ func main() {
 			if err == nil {
 				go (func() {
 					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
-					json, _ := json.Marshal(kapeliItems[item.Id])
-					cache.Exec("INSERT INTO installed_docs(id, name, json) VALUES (?, ?, ?)", kapeliItems[item.Id].Id, kapeliItems[item.Id].Name, string(json))
+					cache.Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", kapeliItems[item.Id].Id)
 					newIndex, newDocsetDbs := createGlobalIndex()
 					docsetDbs = newDocsetDbs
 					docsetIcons[kapeliItems[item.Id].Name] = zealindex.DocsetIcons{kapeliItems[item.Id].Icon, kapeliItems[item.Id].Icon2x}
@@ -269,7 +293,7 @@ func main() {
 		} else {
 			var items []repoItem
 			var item repoItem
-			rows, err := cache.Query("SELECT json FROM installed_docs")
+			rows, err := cache.Query("SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
 			check(err)
 			var rawJson []byte
 			for rows.Next() {
