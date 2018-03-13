@@ -12,6 +12,137 @@ import (
 	"sync"
 )
 
+func mapType(t string) string {
+	typeAliases := map[string]string{
+		"Package Attributes":          "Attribute",
+		"Private Attributes":          "Attribute",
+		"Protected Attributes":        "Attribute",
+		"Public Attributes":           "Attribute",
+		"Static Package Attributes":   "Attribute",
+		"Static Private Attributes":   "Attribute",
+		"Static Protected Attributes": "Attribute",
+		"Static Public Attributes":    "Attribute",
+		"XML Attributes":              "Attribute",
+		// Binding
+		"binding": "Binding",
+		// Category
+		"cat":    "Category",
+		"Groups": "Category",
+		"Pages":  "Category",
+		// Class
+		"cl":             "Class",
+		"specialization": "Class",
+		"tmplt":          "Class",
+		// Constant
+		"data":          "Constant",
+		"econst":        "Constant",
+		"enumdata":      "Constant",
+		"enumelt":       "Constant",
+		"clconst":       "Constant",
+		"structdata":    "Constant",
+		"writerid":      "Constant",
+		"Notifications": "Constant",
+		// Constructor
+		"structctr":           "Constructor",
+		"Public Constructors": "Constructor",
+		// Enumeration
+		"enum":         "Enumeration",
+		"Enum":         "Enumeration",
+		"Enumerations": "Enumeration",
+		// Event
+		"event":            "Event",
+		"Public Events":    "Event",
+		"Inherited Events": "Event",
+		"Private Events":   "Event",
+		// Field
+		"Data Fields": "Field",
+		// Function
+		"dcop":                              "Function",
+		"func":                              "Function",
+		"ffunc":                             "Function",
+		"signal":                            "Function",
+		"slot":                              "Function",
+		"grammar":                           "Function",
+		"Function Prototypes":               "Function",
+		"Functions/Subroutines":             "Function",
+		"Members":                           "Function",
+		"Package Functions":                 "Function",
+		"Private Member Functions":          "Function",
+		"Private Slots":                     "Function",
+		"Protected Member Functions":        "Function",
+		"Protected Slots":                   "Function",
+		"Public Member Functions":           "Function",
+		"Public Slots":                      "Function",
+		"Signals":                           "Function",
+		"Static Package Functions":          "Function",
+		"Static Private Member Functions":   "Function",
+		"Static Protected Member Functions": "Function",
+		"Static Public Member Functions":    "Function",
+		// Guide
+		"doc": "Guide",
+		// Namespace
+		"ns": "Namespace",
+		// Macro
+		"macro": "Macro",
+		// Method
+		"clm":               "Method",
+		"enumcm":            "Method",
+		"enumctr":           "Method",
+		"enumm":             "Method",
+		"intfctr":           "Method",
+		"intfcm":            "Method",
+		"intfm":             "Method",
+		"intfsub":           "Method",
+		"instsub":           "Method",
+		"instctr":           "Method",
+		"instm":             "Method",
+		"structcm":          "Method",
+		"structm":           "Method",
+		"structsub":         "Method",
+		"Class Methods":     "Method",
+		"Inherited Methods": "Method",
+		"Instance Methods":  "Method",
+		"Private Methods":   "Method",
+		"Protected Methods": "Method",
+		"Public Methods":    "Method",
+		// Operator
+		"intfopfunc": "Operator",
+		"opfunc":     "Operator",
+		// Property
+		"enump":                "Property",
+		"intfdata":             "Property",
+		"intfp":                "Property",
+		"instp":                "Property",
+		"structp":              "Property",
+		"Inherited Properties": "Property",
+		"Private Properties":   "Property",
+		"Protected Properties": "Property",
+		"Public Properties":    "Property",
+		// Protocol
+		"intf": "Protocol",
+		// Structure
+		"struct":          "Structure",
+		"Data Structures": "Structure",
+		"Struct":          "Structure",
+		// Type
+		"tag":             "Type",
+		"tdef":            "Type",
+		"Data Types":      "Type",
+		"Package Types":   "Type",
+		"Private Types":   "Type",
+		"Protected Types": "Type",
+		"Public Types":    "Type",
+		"Typedefs":        "Type",
+		// Variable
+		"var": "Variable",
+	}
+	res, exists := typeAliases[t]
+	if exists {
+		return res
+	}
+	return t
+}
+
 func NewProgressHandlers() progressHandlers {
 	return progressHandlers{make(map[int]func(string, int64, int64)), sync.RWMutex{}}
 }
@@ -166,11 +297,12 @@ func ExtractFile(dbName string, path string, w io.Writer) error {
 	}
 }
 
-func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, docsetName string, docsetNum int) {
+func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, types *[]string, docsetName string, docsetNum int) {
 	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type='table'")
 	check(err)
 
 	var col string
+	var tp string
 	var path string
 	var fragment string
 	hasSearchIndex := false
@@ -203,15 +335,16 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, doc
 			"  FROM searchIndex")
 	}
 
-	rows, err = db.Query("select name, path, coalesce(fragment, '') FROM searchIndexView")
+	rows, err = db.Query("select name, type, path, coalesce(fragment, '') FROM searchIndexView")
 	check(err)
 
 	for rows.Next() {
-		err = rows.Scan(&col, &path, &fragment)
+		err = rows.Scan(&col, &tp, &path, &fragment)
 		check(err)
 		*all = append(*all, col)
 		*allMunged = append(*allMunged, Munge(col))
 		*docsets = append(*docsets, docsetNum)
+		*types = append(*types, mapType(tp))
 		if fragment != "" {
 			fragment = "#" + fragment
 		}

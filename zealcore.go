@@ -88,6 +88,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 	var allMunged []string
 	var paths []string
 	var docsets []int
+	var types []string
 	var docsetNames []string
 	var docsetDbs []string
 
@@ -117,7 +118,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 
 		db, err := sql.Open("sqlite3", f.Name())
 		if err == nil {
-			zealindex.ImportRows(db, &all, &allMunged, &paths, &docsets, docsetName, i)
+			zealindex.ImportRows(db, &all, &allMunged, &paths, &docsets, &types, docsetName, i)
 			db.Close()
 		}
 		os.Remove(f.Name())
@@ -129,7 +130,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 
 	fmt.Println(len(all))
 
-	return zealindex.GlobalIndex{&all, &allMunged, &paths, &docsets, docsetNames, nil, sync.RWMutex{}}, docsetDbs
+	return zealindex.GlobalIndex{&all, &allMunged, &paths, &docsets, &types, docsetNames, nil, sync.RWMutex{}}, docsetDbs
 }
 
 func getRepo(cacheDB *sql.DB) []repoItem {
