@@ -325,6 +325,35 @@ func main() {
 		}
 	})
 
+	http.HandleFunc("/item/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(r.URL.Path, "/")
+		if len(parts) < 5 || parts[3] != "symbols" {
+			w.WriteHeader(404)
+			w.Write([]byte("Not found."))
+		}
+		id := parts[2]
+		symType := parts[4]
+		q, err := cache.Query("SELECT json FROM available_docs WHERE id=?", id)
+		if err == nil && q.Next() {
+			var jsonDoc []byte
+			q.Scan(&jsonDoc)
+			var doc repoItem
+			json.Unmarshal(jsonDoc, &doc)
+			var res [][]string
+			for i, s := range *index.Types {
+				if s == symType && (index.DocsetNames[(*index.Docsets)[i]] == doc.Title) {
+					res = append(res, []string{(*index.All)[i], (*index.Paths)[i]})
+				}
+			}
+			b, _ := json.Marshal(res)
+			w.Write(b)
+		} else {
+			w.WriteHeader(404)
+			w.Write([]byte("Not found " + id))
+		}
+		q.Close()
+	})
+
 	http.Handle("/search", websocket.Handler(MakeSearchServer(&index)))
 	lastDownloadHandler := 0
 

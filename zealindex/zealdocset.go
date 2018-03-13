@@ -335,7 +335,7 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, typ
 			"  FROM searchIndex")
 	}
 
-	rows, err = db.Query("select name, type, path, coalesce(fragment, '') FROM searchIndexView")
+	rows, err = db.Query("SELECT name, type, path, coalesce(fragment, '') FROM searchIndexView ORDER BY name ASC")
 	check(err)
 
 	for rows.Next() {
