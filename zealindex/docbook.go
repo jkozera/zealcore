@@ -177,7 +177,7 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 	dirs := xdg.DataDirs()
 	dirs = append(dirs, xdg.DataHome())
 
-	input := make(chan newDocBook, 100)
+	input := make(chan newDocBook, 16)
 	count := 0
 
 	for _, dataDir := range dirs {
@@ -192,7 +192,7 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 						go (func(path, path2 string) {
 							f3, _ := os.Open(path)
 							db := LoadDocBook(f3, true)
-							input <- newDocBook{db, dir + f.Name() + "/", db.Name}
+							input <- newDocBook{db, path2, db.Name}
 						})(dir+f.Name()+"/"+name, dir+f.Name()+"/")
 					}
 					if strings.HasSuffix(name, ".devhelp2") || strings.HasSuffix(name, ".devhelp") {
