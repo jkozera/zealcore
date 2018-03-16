@@ -72,6 +72,7 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 						f3, _ := os.Open(dir + f.Name() + "/" + name)
 						docBooks = append(docBooks, LoadDocBook(f3, false))
 						docsetDocbooks = append(docsetDocbooks, dir+f.Name()+"/")
+						break
 					}
 				}
 			}

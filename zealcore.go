@@ -343,6 +343,10 @@ func main() {
 				items = append(items, item)
 			}
 			for i, docbook := range docsetDocbooks {
+				counts := make(map[string]int)
+				for _, ch := range parsedDocbooks[i].Chapters {
+					counts[ch.Name] = len(ch.Subs)
+				}
 				if docbook != "" {
 					gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
 					gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
@@ -365,7 +369,7 @@ func main() {
 						parsedDocbooks[i].Language,
 						repoItemExtra{""},
 						index.DocsetNames[i],
-						make(map[string]int),
+						counts,
 					}
 					items = append(items, newItem)
 				}
@@ -378,12 +382,34 @@ func main() {
 
 	http.HandleFunc("/item/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) < 5 || parts[3] != "symbols" {
+		if len(parts) < 4 || parts[3] != "symbols" {
 			w.WriteHeader(404)
 			w.Write([]byte("Not found."))
 		}
 		id := parts[2]
 		symType := parts[4]
+		for i, name := range index.DocsetNames {
+			if id == name {
+				chaps := parsedDocbooks[i].Chapters
+				var chap zealindex.DocbookSub
+				for i := 4; i < len(parts); i += 1 {
+					for _, chap2 := range chaps {
+						if chap2.Name == parts[i] {
+							chap = chap2
+							chaps = chap.Subs
+							break
+						}
+					}
+				}
+				var res [][]string
+				for _, subchap := range chaps {
+					res = append(res, []string{subchap.Name, name + ".docbook/" + subchap.Link})
+				}
+				b, _ := json.Marshal(res)
+				w.Write(b)
+				return
+			}
+		}
 		q, err := cache.Query("SELECT json FROM available_docs WHERE id=?", id)
 		if err == nil && q.Next() {
 			var jsonDoc []byte
