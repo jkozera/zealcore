@@ -167,9 +167,18 @@ func (d DocbooksRepo) GetChapters(id, path string) [][]string {
 	return res
 }
 
+type newDocBook struct {
+	db   Docbook
+	path string
+	name string
+}
+
 func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 	dirs := xdg.DataDirs()
 	dirs = append(dirs, xdg.DataHome())
+
+	input := make(chan newDocBook, 100)
+	count := 0
 
 	for _, dataDir := range dirs {
 		for _, dir := range []string{dataDir + "/devhelp/books/", dataDir + "/gtk-doc/html/"} {
@@ -179,23 +188,34 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 				for _, f2 := range files2 {
 					name := f2.Name()
 					if strings.HasSuffix(name, ".devhelp.gz") {
-						f3, _ := os.Open(dir + f.Name() + "/" + name)
-						db := LoadDocBook(f3, true)
-						(*dr.docBooks) = append((*dr.docBooks), db)
-						(*dr.paths) = append((*dr.paths), dir+f.Name()+"/")
-						(*dr.names) = append((*dr.names), db.Name)
+						count += 1
+						go (func(path, path2 string) {
+							f3, _ := os.Open(path)
+							db := LoadDocBook(f3, true)
+							input <- newDocBook{db, dir + f.Name() + "/", db.Name}
+						})(dir+f.Name()+"/"+name, dir+f.Name()+"/")
 					}
 					if strings.HasSuffix(name, ".devhelp2") || strings.HasSuffix(name, ".devhelp") {
-						f3, _ := os.Open(dir + f.Name() + "/" + name)
-						db := LoadDocBook(f3, false)
-						(*dr.docBooks) = append((*dr.docBooks), db)
-						(*dr.paths) = append((*dr.paths), dir+f.Name()+"/")
-						(*dr.names) = append((*dr.names), db.Name)
+						count += 1
+						go (func(path, path2 string) {
+							f3, _ := os.Open(path)
+							db := LoadDocBook(f3, false)
+							input <- newDocBook{db, path2, db.Name}
+						})(dir+f.Name()+"/"+name, dir+f.Name()+"/")
 						break
 					}
 				}
 			}
 		}
+	}
+
+	for count > 0 {
+		count -= 1
+		n := <-input
+
+		(*dr.docBooks) = append((*dr.docBooks), n.db)
+		(*dr.paths) = append((*dr.paths), n.path)
+		(*dr.names) = append((*dr.names), n.name)
 	}
 
 	re := regexp.MustCompile("(.*) \\(([^()]+) ([^()]+)\\)")
