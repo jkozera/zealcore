@@ -79,13 +79,14 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 		}
 	}
 
-	re := regexp.MustCompile("(.*) \\(([^()]+) [^()]+\\)")
+	re := regexp.MustCompile("(.*) \\(([^()]+) ([^()]+)\\)")
 
 	for _, d := range docBooks {
 		docsetNum := len(*docsetNames)
 		*docsetNames = append(*docsetNames, d.Name)
 		processKw := func(kw DocbookKw) {
 			kwStr := kw.Name
+			typeMatched := ""
 			if re.MatchString(kwStr) {
 				sm := re.FindStringSubmatch(kwStr)
 				if sm[2] != "built-in" {
@@ -93,12 +94,17 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 					// replace values like `getv() (GObject.Object method)` with values like `GObject.Object.getv()`
 					// (for consistency with Zeal/Dash)
 				}
+				typeMatched = sm[3]
 			}
 
 			*all = append(*all, kwStr)
 			*allMunged = append(*allMunged, Munge(kwStr))
 			*docsets = append(*docsets, docsetNum)
-			*types = append(*types, kw.Type)
+			if typeMatched != "" {
+				*types = append(*types, MapType(typeMatched))
+			} else {
+				*types = append(*types, MapType(kw.Type))
+			}
 			*paths = append(*paths, d.Name+".docbook/"+kw.Link)
 		}
 		for _, c := range d.Functions {

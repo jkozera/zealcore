@@ -344,8 +344,10 @@ func main() {
 			}
 			for i, docbook := range docsetDocbooks {
 				counts := make(map[string]int)
-				for _, ch := range parsedDocbooks[i].Chapters {
-					counts[ch.Name] = len(ch.Subs)
+				for j, ch := range *index.Docsets {
+					if index.DocsetNames[ch] == index.DocsetNames[i] {
+						counts[(*index.Types)[j]] += 1
+					}
 				}
 				if docbook != "" {
 					gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
@@ -382,32 +384,34 @@ func main() {
 
 	http.HandleFunc("/item/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) < 4 || parts[3] != "symbols" {
+		if len(parts) < 4 || (parts[3] != "symbols" && parts[3] != "chapters") {
 			w.WriteHeader(404)
 			w.Write([]byte("Not found."))
 		}
 		id := parts[2]
 		symType := parts[4]
-		for i, name := range index.DocsetNames {
-			if id == name {
-				chaps := parsedDocbooks[i].Chapters
-				var chap zealindex.DocbookSub
-				for i := 4; i < len(parts); i += 1 {
-					for _, chap2 := range chaps {
-						if chap2.Name == parts[i] {
-							chap = chap2
-							chaps = chap.Subs
-							break
+		if parts[3] == "chapters" {
+			for i, name := range index.DocsetNames {
+				if id == name {
+					chaps := parsedDocbooks[i].Chapters
+					var chap zealindex.DocbookSub
+					for i := 4; i < len(parts); i += 1 {
+						for _, chap2 := range chaps {
+							if chap2.Name == parts[i] {
+								chap = chap2
+								chaps = chap.Subs
+								break
+							}
 						}
 					}
+					var res [][]string
+					for _, subchap := range chaps {
+						res = append(res, []string{subchap.Name, name + ".docbook/" + subchap.Link})
+					}
+					b, _ := json.Marshal(res)
+					w.Write(b)
+					return
 				}
-				var res [][]string
-				for _, subchap := range chaps {
-					res = append(res, []string{subchap.Name, name + ".docbook/" + subchap.Link})
-				}
-				b, _ := json.Marshal(res)
-				w.Write(b)
-				return
 			}
 		}
 		q, err := cache.Query("SELECT json FROM available_docs WHERE id=?", id)
@@ -416,18 +420,18 @@ func main() {
 			q.Scan(&jsonDoc)
 			var doc repoItem
 			json.Unmarshal(jsonDoc, &doc)
-			var res [][]string
-			for i, s := range *index.Types {
-				if s == symType && (index.DocsetNames[(*index.Docsets)[i]] == doc.Title) {
-					res = append(res, []string{(*index.All)[i], (*index.Paths)[i]})
-				}
-			}
-			b, _ := json.Marshal(res)
-			w.Write(b)
-		} else {
-			w.WriteHeader(404)
-			w.Write([]byte("Not found " + id))
+			id = doc.Title
 		}
+		// docbook ids are titles
+		var res [][]string
+		for i, s := range *index.Types {
+			if s == symType && (index.DocsetNames[(*index.Docsets)[i]] == id) {
+				res = append(res, []string{(*index.All)[i], (*index.Paths)[i]})
+			}
+		}
+		b, _ := json.Marshal(res)
+		w.Write(b)
+
 		q.Close()
 	})
 

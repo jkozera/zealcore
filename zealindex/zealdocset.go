@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"runtime"
 	"strings"
@@ -135,6 +136,17 @@ func MapType(t string) string {
 		"Typedefs":        "Type",
 		// Variable
 		"var": "Variable",
+		// docbooks:
+		"attribute":        "Attribute",
+		"class":            "Class",
+		"method":           "Method",
+		"Class Structures": "Structure",
+		"Classes":          "Class",
+		"Flags":            "Constant",
+		"Enums":            "Enumeration",
+		"function":         "Function",
+		"variable":         "Variable",
+		"":                 "Unknown",
 	}
 	res, exists := typeAliases[t]
 	if exists {
