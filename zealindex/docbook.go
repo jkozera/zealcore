@@ -2,7 +2,9 @@ package zealindex
 
 import (
 	"compress/gzip"
+	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"github.com/kyoh86/xdg"
 	"io"
 	"io/ioutil"
@@ -36,6 +38,25 @@ type Docbook struct {
 	Keywords  []DocbookKw  `xml:"functions>keyword"`
 }
 
+type DocbooksRepo struct {
+	docBooks     *[]Docbook
+	names        *[]string
+	paths        *[]string
+	symbolCounts *map[string]map[string]int
+}
+
+func NewDocbooksRepo() DocbooksRepo {
+	var docBooks []Docbook
+	var names []string
+	var paths []string
+	counts := make(map[string]map[string]int)
+	return DocbooksRepo{&docBooks, &names, &paths, &counts}
+}
+
+func (d DocbooksRepo) Name() string {
+	return "org.gnome"
+}
+
 func LoadDocBook(f *os.File, gz bool) Docbook {
 	var r io.Reader
 
@@ -50,9 +71,103 @@ func LoadDocBook(f *os.File, gz bool) Docbook {
 	return res
 }
 
-func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[]string, docsetNames *[]string) ([]string, []Docbook) {
-	var docBooks []Docbook
-	var docsetDocbooks []string
+func (d DocbooksRepo) GetAvailableForInstall() ([]RepoItem, error) {
+	return make([]RepoItem, 0), nil
+}
+
+func (d DocbooksRepo) StartDocsetInstallById(id string, handlers ProgressHandlers, completed func()) string {
+	return ""
+}
+
+func (d DocbooksRepo) GetInstalled() []RepoItem {
+	gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
+	gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
+	var gnomeIcon, gnomeIcon2x string
+	if err == nil {
+		gnomeIcon = base64.StdEncoding.EncodeToString(gnomeIconBytes)
+		gnomeIcon2x = base64.StdEncoding.EncodeToString(gnomeIcon2xBytes)
+	} else {
+		gnomeIcon = ""
+		gnomeIcon2x = ""
+	}
+	var items []RepoItem
+	for i, docbook := range *d.names {
+		if docbook != "" {
+			newItem := RepoItem{
+				d.Name(),
+				(*d.names)[i],
+				(*d.names)[i],
+				[]string{},
+				"",
+				gnomeIcon,
+				gnomeIcon2x,
+				(*d.docBooks)[i].Language,
+				RepoItemExtra{""},
+				(*d.names)[i],
+				(*d.symbolCounts)[(*d.names)[i]],
+			}
+			items = append(items, newItem)
+		}
+	}
+	return items
+}
+
+func (d DocbooksRepo) GetSymbols(index GlobalIndex, id, tp string) [][]string {
+	var res [][]string
+	for i, s := range *index.Types {
+		name := (*index.DocsetNames)[(*index.Docsets)[i]]
+		if name[0] != d.Name() {
+			continue
+		}
+		if s == tp && (name[1] == id) {
+			res = append(res, []string{(*index.All)[i], "docs/" + (*index.Paths)[i]})
+		}
+	}
+	return res
+}
+
+func (d DocbooksRepo) GetPage(path string, w io.Writer) error {
+	for i, name := range *d.names {
+		prefix := "/" + name + ".docbook/"
+		if strings.HasPrefix(path, prefix) {
+			f, err := os.Open((*d.paths)[i] + path[len(prefix):])
+			if err == nil {
+				_, err := io.Copy(w, f)
+				return err
+			} else {
+				return err
+			}
+		}
+	}
+	return errors.New("not found")
+}
+
+func (d DocbooksRepo) GetChapters(id, path string) [][]string {
+	var res [][]string
+	for i, name := range *d.names {
+		if id == name {
+			chaps := (*d.docBooks)[i].Chapters
+			var chap DocbookSub
+			parts := strings.Split(path, "/")
+			for i := 0; i < len(parts); i += 1 {
+				for _, chap2 := range chaps {
+					if chap2.Name == parts[i] {
+						chap = chap2
+						chaps = chap.Subs
+						break
+					}
+				}
+			}
+
+			for _, subchap := range chaps {
+				res = append(res, []string{subchap.Name, "docs/" + name + ".docbook/" + subchap.Link})
+			}
+		}
+	}
+	return res
+}
+
+func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 	dirs := xdg.DataDirs()
 	dirs = append(dirs, xdg.DataHome())
 
@@ -65,13 +180,17 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 					name := f2.Name()
 					if strings.HasSuffix(name, ".devhelp.gz") {
 						f3, _ := os.Open(dir + f.Name() + "/" + name)
-						docBooks = append(docBooks, LoadDocBook(f3, true))
-						docsetDocbooks = append(docsetDocbooks, dir+f.Name()+"/")
+						db := LoadDocBook(f3, true)
+						(*dr.docBooks) = append((*dr.docBooks), db)
+						(*dr.paths) = append((*dr.paths), dir+f.Name()+"/")
+						(*dr.names) = append((*dr.names), db.Name)
 					}
 					if strings.HasSuffix(name, ".devhelp2") || strings.HasSuffix(name, ".devhelp") {
 						f3, _ := os.Open(dir + f.Name() + "/" + name)
-						docBooks = append(docBooks, LoadDocBook(f3, false))
-						docsetDocbooks = append(docsetDocbooks, dir+f.Name()+"/")
+						db := LoadDocBook(f3, false)
+						(*dr.docBooks) = append((*dr.docBooks), db)
+						(*dr.paths) = append((*dr.paths), dir+f.Name()+"/")
+						(*dr.names) = append((*dr.names), db.Name)
 						break
 					}
 				}
@@ -81,9 +200,10 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 
 	re := regexp.MustCompile("(.*) \\(([^()]+) ([^()]+)\\)")
 
-	for _, d := range docBooks {
-		docsetNum := len(*docsetNames)
-		*docsetNames = append(*docsetNames, d.Name)
+	for _, d := range *dr.docBooks {
+		docsetNum := len(*(idx.DocsetNames))
+		*(idx.DocsetNames) = append(*(idx.DocsetNames), []string{dr.Name(), d.Name})
+		(*dr.symbolCounts)[d.Name] = make(map[string]int)
 		processKw := func(kw DocbookKw) {
 			kwStr := kw.Name
 			typeMatched := ""
@@ -97,15 +217,17 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 				typeMatched = sm[3]
 			}
 
-			*all = append(*all, kwStr)
-			*allMunged = append(*allMunged, Munge(kwStr))
-			*docsets = append(*docsets, docsetNum)
+			*(idx.All) = append(*(idx.All), kwStr)
+			*(idx.AllMunged) = append(*(idx.AllMunged), Munge(kwStr))
+			*(idx.Docsets) = append(*(idx.Docsets), docsetNum)
 			if typeMatched != "" {
-				*types = append(*types, MapType(typeMatched))
+				*(idx.Types) = append(*(idx.Types), MapType(typeMatched))
+				(*dr.symbolCounts)[d.Name][MapType(typeMatched)] += 1
 			} else {
-				*types = append(*types, MapType(kw.Type))
+				*(idx.Types) = append(*(idx.Types), MapType(kw.Type))
+				(*dr.symbolCounts)[d.Name][MapType(kw.Type)] += 1
 			}
-			*paths = append(*paths, d.Name+".docbook/"+kw.Link)
+			*(idx.Paths) = append(*(idx.Paths), d.Name+".docbook/"+kw.Link)
 		}
 		for _, c := range d.Functions {
 			processKw(c)
@@ -114,6 +236,4 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 			processKw(c)
 		}
 	}
-
-	return docsetDocbooks, docBooks
 }

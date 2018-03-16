@@ -5,8 +5,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"io/ioutil"
+	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -158,15 +163,6 @@ func MapType(t string) string {
 	return t
 }
 
-func NewProgressHandlers() progressHandlers {
-	return progressHandlers{make(map[int]func(string, int64, int64)), sync.RWMutex{}}
-}
-
-type progressHandlers struct {
-	Map  map[int]func(string, int64, int64)
-	Lock sync.RWMutex
-}
-
 type gzJob struct {
 	Hdr  *tar.Header
 	toGz []byte
@@ -193,7 +189,7 @@ func (r ReaderWithProgress) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func ExtractDocs(title string, f io.Reader, contentType string, size int64, downloadProgressHandlers progressHandlers) {
+func ExtractDocs(title string, f io.Reader, contentType string, size int64, downloadProgressHandlers ProgressHandlers) {
 	progressReader := NewReaderWithProgress(f)
 	gz, err := gzip.NewReader(progressReader)
 	check(err)
@@ -303,6 +299,236 @@ func ExtractFile(dbName string, path string, w io.Writer) error {
 			db.Close()
 			return errors.New("not found: " + path)
 		}
+	}
+}
+
+func (d DashRepo) StartDocsetInstallById(id string, downloadProgressHandlers ProgressHandlers, completed func()) string {
+	item, ok := (*d.kapeliItems)[id]
+	if !ok {
+		return ""
+	}
+	resp, err := http.Get("https://go.zealdocs.org/d/com.kapeli/" + item.Name + "/latest")
+	if err == nil {
+		go (func() {
+			ExtractDocs((*d.kapeliItems)[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
+			GetCacheDB().Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", (*d.kapeliItems)[item.Id].Id)
+			completed()
+			downloadProgressHandlers.Lock.RLock()
+			// report 100% only after new index is created:
+			for _, v := range downloadProgressHandlers.Map {
+				v((*d.kapeliItems)[item.Id].Title, resp.ContentLength, resp.ContentLength)
+			}
+			downloadProgressHandlers.Lock.RUnlock()
+		})()
+		return item.Name
+	}
+	return ""
+}
+
+func getRepo() []RepoItem {
+	dbRes, _ := GetCacheDB().Query("SELECT id, json FROM available_docs")
+	var items []RepoItem
+	var item RepoItem
+	for dbRes.Next() {
+		var id string
+		var value []byte
+		dbRes.Scan(&id, &value)
+		json.Unmarshal(value, &item)
+		item.Id = id
+		items = append(items, item)
+	}
+	dbRes.Close()
+	return items
+}
+
+func (d DashRepo) GetInstalled() []RepoItem {
+	var items []RepoItem
+	var item RepoItem
+	var id string
+	rows, err := GetCacheDB().Query("SELECT id, json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
+	check(err)
+	var rawJson []byte
+	for rows.Next() {
+		err = rows.Scan(&id, &rawJson)
+		json.Unmarshal(rawJson, &item)
+		item.Id = id
+		item.SymbolCounts = (*d.symbolCounts)[item.Title]
+		items = append(items, item)
+	}
+	rows.Close()
+	return items
+}
+
+func (d DashRepo) GetSymbols(index GlobalIndex, id, tp string) [][]string {
+	q, err := cache.Query("SELECT json FROM available_docs WHERE id=?", id)
+	if err == nil && q.Next() {
+		var jsonDoc []byte
+		q.Scan(&jsonDoc)
+		var doc RepoItem
+		json.Unmarshal(jsonDoc, &doc)
+		id = doc.Title
+	} else {
+		return make([][]string, 0)
+	}
+	q.Close()
+	var res [][]string
+	for i, s := range *index.Types {
+		name := (*index.DocsetNames)[(*index.Docsets)[i]]
+		if name[0] != d.Name() {
+			continue
+		}
+		fmt.Println(s, tp)
+
+		if s == tp && (name[1] == id) {
+			res = append(res, []string{(*index.All)[i], "docs/" + (*index.Paths)[i]})
+		}
+	}
+	return res
+}
+
+func (d DashRepo) GetChapters(id, path string) [][]string {
+	return make([][]string, 0)
+}
+
+func (d DashRepo) GetPage(path string, w io.Writer) error {
+	for i, name := range *d.docsetNames {
+		prefix := "/" + name + ".docset/"
+		if strings.HasPrefix(path, prefix) {
+			return ExtractFile((*d.docsetDbs)[i], path[1:], w)
+		}
+	}
+	return errors.New("not found")
+}
+
+func (d DashRepo) updateRepo(updateDbFrom []RepoItem) {
+	cacheDb := GetCacheDB()
+	if updateDbFrom != nil {
+		cacheDb.Exec("DROP TABLE available_docs")
+		cacheDb.Exec("CREATE TABLE available_docs (id integer primary key autoincrement, repo_id, name, json)")
+		for _, item := range updateDbFrom {
+			itemJson, _ := json.Marshal(item)
+			dbRes, err := cacheDb.Query("SELECT id FROM available_docs WHERE name = ?", item.Name)
+			if err == nil && dbRes.Next() {
+				var id string
+				dbRes.Scan(&id)
+				cacheDb.Exec("UPDATE available_docs SET json = ? WHERE id = ?", itemJson, id)
+			} else {
+				cacheDb.Exec("INSERT INTO available_docs (repo_id, name, json) VALUES (1, ?, ?)", item.Name, itemJson)
+			}
+			dbRes.Close()
+		}
+	}
+	items := getRepo()
+	for _, item := range items {
+		(*d.kapeliItems)[item.Id] = item
+	}
+}
+
+type DashRepo struct {
+	kapeliItems  *map[string]RepoItem
+	docsetNames  *[]string
+	docsetDbs    *[]string
+	docsetIcons  *map[string]DocsetIcons
+	symbolCounts *map[string]map[string]int
+}
+
+func NewDashRepo() DashRepo {
+	items := make(map[string]RepoItem)
+	var names []string
+	var dbs []string
+	icons := make(map[string]DocsetIcons)
+	counts := make(map[string]map[string]int)
+	res := DashRepo{&items, &names, &dbs, &icons, &counts}
+	res.GetAvailableForInstall()
+	res.updateRepo(nil)
+
+	rows, _ := GetCacheDB().Query("SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
+	for rows.Next() {
+		var data []byte
+		var item RepoItem
+		rows.Scan(&data)
+		json.Unmarshal(data, &item)
+		(*res.docsetIcons)[item.Name] = DocsetIcons{item.Icon, item.Icon2x}
+	}
+	rows.Close()
+
+	return res
+}
+
+func (d DashRepo) Name() string {
+	return "com.kapeli"
+}
+
+func (d DashRepo) GetAvailableForInstall() ([]RepoItem, error) {
+	repo := getRepo()
+	if len(repo) > 0 {
+		return repo, nil
+	}
+	res, err := http.Get("http://api.zealdocs.org/v1/docsets")
+	if err == nil {
+		body, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return nil, err
+		} else {
+			var items []RepoItem
+			json.Unmarshal(body, &items)
+			d.updateRepo(items)
+			return items, nil
+		}
+	} else {
+		return nil, err
+	}
+}
+
+func (d DashRepo) ImportAll(idx GlobalIndex) {
+	files, err := ioutil.ReadDir(".")
+	check(err)
+
+	i := 0
+	for _, f := range files {
+		name := f.Name()
+		if !strings.HasSuffix(name, ".zealdocset") {
+			continue
+		}
+
+		f, err := ioutil.TempFile("", "zealdb")
+		check(err)
+		f_shm, err := os.Create(f.Name() + "-shm")
+		check(err)
+		f_wal, err := os.Create(f.Name() + "-wal")
+		check(err)
+		docsetName := strings.Replace(name, ".zealdocset", ".docset", 1)
+		check(ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx", f))
+		ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-shm", f_shm)
+		ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", f_wal)
+		shortName := strings.Replace(docsetName, ".docset", "", 1)
+		(*d.docsetNames) = append(*d.docsetNames, shortName)
+		(*idx.DocsetNames) = append(*idx.DocsetNames, []string{d.Name(), shortName})
+		(*d.docsetDbs) = append(*d.docsetDbs, name)
+		f.Close()
+
+		db, err := sql.Open("sqlite3", f.Name())
+
+		if err == nil {
+			ImportRows(db, idx.All, idx.AllMunged, idx.Paths, idx.Docsets, idx.Types, docsetName, i)
+
+			curCounts := make(map[string]int)
+			dbRes, _ := db.Query("SELECT type, COUNT(*) FROM searchIndexView GROUP BY type")
+			for dbRes.Next() {
+				var tp string
+				var count int
+				dbRes.Scan(&tp, &count)
+				curCounts[MapType(tp)] += count
+			}
+			dbRes.Close()
+			(*d.symbolCounts)[strings.Replace(docsetName, ".docset", "", 1)] = curCounts
+			db.Close()
+		}
+		os.Remove(f.Name())
+		os.Remove(f_shm.Name())
+		os.Remove(f_wal.Name())
+		check(err)
+		i += 1
 	}
 }
 
