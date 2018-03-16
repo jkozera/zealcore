@@ -1,0 +1,4 @@
+vendor
+*.zealdocset
+*sqlite3
+wscat

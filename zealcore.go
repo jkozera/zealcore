@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/base64"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/net/websocket"
 	"io"
@@ -63,6 +64,7 @@ func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
 			firstRes := true
 
 			resultCb := func(res zealindex.Result) {
+				res.Path = "docs/" + res.Path
 				js, err := json.Marshal(res)
 				check(err)
 				if firstRes {
@@ -242,160 +244,148 @@ func main() {
 	index, docsetDbs, docsetDocbooks, parsedDocbooks = createGlobalIndex()
 	index.DocsetIcons = docsetIcons
 
-	http.Handle("/html/", http.FileServer(http.Dir(".")))
-	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("[{\"name\": \"api.zealdocs.org\", \"id\": 1}]"))
+	router := gin.Default()
+	router.Static("/html", "./html")
+	router.GET("/index", func(c *gin.Context) {
+		c.Data(200, "application/json", []byte("[{\"name\": \"api.zealdocs.org\", \"id\": 1}]"))
 	})
-	http.HandleFunc("/index/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/repos") {
-			indexId, err := strconv.Atoi(r.URL.Path[len("/index/") : len(r.URL.Path)-len("/repos")])
-			if err == nil && indexId == 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte("[{\"name\": \"com.kapeli\", \"id\": 1}]"))
+	router.GET("/index/:id/repos", func(c *gin.Context) {
+		indexId, err := strconv.Atoi(c.Param("id"))
+		if err == nil && indexId == 1 {
+			c.Data(200, "application/json", []byte("[{\"name\": \"com.kapeli\", \"id\": 1}]"))
+			return
+		}
+		c.Data(404, "text/plain", []byte("not found"))
+	})
+	router.GET("/repo/:id/items", func(c *gin.Context) {
+		repoId, err := strconv.Atoi(c.Param("id"))
+		if err == nil && repoId == 1 {
+			repo := getRepoJson(cache)
+			if len(repo) > 0 {
+				c.Data(200, "application/json", repo)
 				return
 			}
-		}
-		w.WriteHeader(404)
-	})
-	http.HandleFunc("/repo/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/items") {
-			repoId, err := strconv.Atoi(r.URL.Path[len("/repo/") : len(r.URL.Path)-len("/items")])
-			if err == nil && repoId == 1 {
-				repo := getRepoJson(cache)
-				if len(repo) > 0 {
-					w.Header().Set("Content-Type", "application/json")
-					w.Write(repo)
-					return
-				}
-				res, err := http.Get("http://api.zealdocs.org/v1/docsets")
-				if err == nil {
-					w.Header().Set("Content-Type", "application/json")
-					body, err := ioutil.ReadAll(res.Body)
-					if err != nil {
-						w.WriteHeader(500)
-						w.Write([]byte(err.Error()))
-					} else {
-						var items []repoItem
-						json.Unmarshal(body, &items)
-						updateRepo(cache, &kapeliItems, items)
-						w.Write(getRepoJson(cache))
-					}
-					return
+			res, err := http.Get("http://api.zealdocs.org/v1/docsets")
+			if err == nil {
+				body, err := ioutil.ReadAll(res.Body)
+				if err != nil {
+					c.Data(500, "text/plain", []byte(err.Error()))
 				} else {
-					w.WriteHeader(500)
-					w.Write([]byte(err.Error()))
-					return
+					var items []repoItem
+					json.Unmarshal(body, &items)
+					updateRepo(cache, &kapeliItems, items)
+					c.Data(200, "application/json", getRepoJson(cache))
 				}
+				return
+			} else {
+				c.Data(500, "text/plain", []byte(err.Error()))
+				return
 			}
+		} else {
+			c.Data(404, "text/plain", []byte("not found"))
 		}
-		w.WriteHeader(404)
 	})
 
 	downloadProgressHandlers := zealindex.NewProgressHandlers()
-	http.HandleFunc("/item", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" {
-			var item postItem
-			body, err := ioutil.ReadAll(r.Body)
-			if err == nil {
-				err = json.Unmarshal(body, &item)
-			}
-			var resp *http.Response
-			if err == nil {
-				resp, err = http.Get("https://go.zealdocs.org/d/com.kapeli/" + kapeliItems[item.Id].Name + "/latest")
-			}
-			if err == nil {
-				go (func() {
-					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
-					cache.Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", kapeliItems[item.Id].Id)
-					newIndex, newDocsetDbs, newDocsetDocbooks, newParsedDocbooks := createGlobalIndex()
-					docsetDbs = newDocsetDbs
-					docsetDocbooks = newDocsetDocbooks
-					parsedDocbooks = newParsedDocbooks
-					docsetIcons[kapeliItems[item.Id].Name] = zealindex.DocsetIcons{kapeliItems[item.Id].Icon, kapeliItems[item.Id].Icon2x}
-					newIndex.DocsetIcons = docsetIcons
-					index.UpdateWith(&newIndex)
-					downloadProgressHandlers.Lock.RLock()
-					// report 100% only after new index is created:
-					for _, v := range downloadProgressHandlers.Map {
-						v(kapeliItems[item.Id].Title, resp.ContentLength, resp.ContentLength)
-					}
-					downloadProgressHandlers.Lock.RUnlock()
-				})()
-				w.Write([]byte(kapeliItems[item.Id].Name))
-			}
-			if err != nil {
-				w.WriteHeader(500)
-				w.Write([]byte(err.Error()))
-			}
-		} else {
-			var items []repoItem
-			var item repoItem
-			var id string
-			rows, err := cache.Query("SELECT id, json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
-			check(err)
-			var rawJson []byte
-			for rows.Next() {
-				err = rows.Scan(&id, &rawJson)
-				json.Unmarshal(rawJson, &item)
-				item.Id = id
-				item.SymbolCounts = (*index.SymbolCounts)[item.Title]
-				items = append(items, item)
-			}
-			for i, docbook := range docsetDocbooks {
-				counts := make(map[string]int)
-				for j, ch := range *index.Docsets {
-					if index.DocsetNames[ch] == index.DocsetNames[i] {
-						counts[(*index.Types)[j]] += 1
-					}
+	router.POST("/item", func(c *gin.Context) {
+		var item postItem
+		body, err := ioutil.ReadAll(c.Request.Body)
+		if err == nil {
+			err = json.Unmarshal(body, &item)
+		}
+		var resp *http.Response
+		if err == nil {
+			resp, err = http.Get("https://go.zealdocs.org/d/com.kapeli/" + kapeliItems[item.Id].Name + "/latest")
+		}
+		if err == nil {
+			go (func() {
+				zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
+				cache.Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", kapeliItems[item.Id].Id)
+				newIndex, newDocsetDbs, newDocsetDocbooks, newParsedDocbooks := createGlobalIndex()
+				docsetDbs = newDocsetDbs
+				docsetDocbooks = newDocsetDocbooks
+				parsedDocbooks = newParsedDocbooks
+				docsetIcons[kapeliItems[item.Id].Name] = zealindex.DocsetIcons{kapeliItems[item.Id].Icon, kapeliItems[item.Id].Icon2x}
+				newIndex.DocsetIcons = docsetIcons
+				index.UpdateWith(&newIndex)
+				downloadProgressHandlers.Lock.RLock()
+				// report 100% only after new index is created:
+				for _, v := range downloadProgressHandlers.Map {
+					v(kapeliItems[item.Id].Title, resp.ContentLength, resp.ContentLength)
 				}
-				if docbook != "" {
-					gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
-					gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
-					var gnomeIcon, gnomeIcon2x string
-					if err == nil {
-						gnomeIcon = base64.StdEncoding.EncodeToString(gnomeIconBytes)
-						gnomeIcon2x = base64.StdEncoding.EncodeToString(gnomeIcon2xBytes)
-					} else {
-						 gnomeIcon = ""
-						gnomeIcon2x = ""
-					}
-					newItem := repoItem{
-						"gnome",
-						index.DocsetNames[i],
-						index.DocsetNames[i],
-						[]string{},
-						"",
-						gnomeIcon,
-						gnomeIcon2x,
-						parsedDocbooks[i].Language,
-						repoItemExtra{""},
-						index.DocsetNames[i],
-						counts,
-					}
-					items = append(items, newItem)
-				}
-			}
-			rows.Close()
-			b, _ := json.Marshal(items)
-			w.Write(b)
+				downloadProgressHandlers.Lock.RUnlock()
+			})()
+			c.Data(200, "text/plain", []byte(kapeliItems[item.Id].Name))
+		}
+		if err != nil {
+			c.Data(500, "text/plain", []byte(err.Error()))
 		}
 	})
-
-	http.HandleFunc("/item/", func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) < 4 || (parts[3] != "symbols" && parts[3] != "chapters") {
-			w.WriteHeader(404)
-			w.Write([]byte("Not found."))
+	router.GET("/item", func(c *gin.Context) {
+		var items []repoItem
+		var item repoItem
+		var id string
+		rows, err := cache.Query("SELECT id, json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
+		check(err)
+		var rawJson []byte
+		for rows.Next() {
+			err = rows.Scan(&id, &rawJson)
+			json.Unmarshal(rawJson, &item)
+			item.Id = id
+			item.SymbolCounts = (*index.SymbolCounts)[item.Title]
+			items = append(items, item)
 		}
-		id := parts[2]
-		symType := parts[4]
-		if parts[3] == "chapters" {
+		for i, docbook := range docsetDocbooks {
+			counts := make(map[string]int)
+			for j, ch := range *index.Docsets {
+				if index.DocsetNames[ch] == index.DocsetNames[i] {
+					counts[(*index.Types)[j]] += 1
+				}
+			}
+			if docbook != "" {
+				gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
+				gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
+				var gnomeIcon, gnomeIcon2x string
+				if err == nil {
+					gnomeIcon = base64.StdEncoding.EncodeToString(gnomeIconBytes)
+					gnomeIcon2x = base64.StdEncoding.EncodeToString(gnomeIcon2xBytes)
+				} else {
+					gnomeIcon = ""
+					gnomeIcon2x = ""
+				}
+				newItem := repoItem{
+					"gnome",
+					index.DocsetNames[i],
+					index.DocsetNames[i],
+					[]string{},
+					"",
+					gnomeIcon,
+					gnomeIcon2x,
+					parsedDocbooks[i].Language,
+					repoItemExtra{""},
+					index.DocsetNames[i],
+					counts,
+				}
+				items = append(items, newItem)
+			}
+		}
+		rows.Close()
+		b, _ := json.Marshal(items)
+		c.Data(200, "application/json", b)
+	})
+
+	router.GET("/item/:docset/:type/*path", func(c *gin.Context) {
+		if c.Param("type") != "symbols" && c.Param("type") != "chapters" {
+			c.Data(404, "text/plain", []byte("Not found: "+c.Param("type")+"."))
+		}
+		id := c.Param("docset")
+		if c.Param("type") == "chapters" {
 			for i, name := range index.DocsetNames {
 				if id == name {
 					chaps := parsedDocbooks[i].Chapters
 					var chap zealindex.DocbookSub
-					for i := 4; i < len(parts); i += 1 {
+					parts := strings.Split(c.Param("path")[1:], "/")
+					for i := 0; i < len(parts); i += 1 {
 						for _, chap2 := range chaps {
 							if chap2.Name == parts[i] {
 								chap = chap2
@@ -406,10 +396,10 @@ func main() {
 					}
 					var res [][]string
 					for _, subchap := range chaps {
-						res = append(res, []string{subchap.Name, name + ".docbook/" + subchap.Link})
+						res = append(res, []string{subchap.Name, "docs/" + name + ".docbook/" + subchap.Link})
 					}
 					b, _ := json.Marshal(res)
-					w.Write(b)
+					c.Data(200, "application/json", b)
 					return
 				}
 			}
@@ -425,78 +415,89 @@ func main() {
 		// docbook ids are titles
 		var res [][]string
 		for i, s := range *index.Types {
-			if s == symType && (index.DocsetNames[(*index.Docsets)[i]] == id) {
-				res = append(res, []string{(*index.All)[i], (*index.Paths)[i]})
+			if s == c.Param("path")[1:] && (index.DocsetNames[(*index.Docsets)[i]] == id) {
+				res = append(res, []string{(*index.All)[i], "docs/" + (*index.Paths)[i]})
 			}
 		}
 		b, _ := json.Marshal(res)
-		w.Write(b)
+		c.Data(200, "application/json", b)
 
 		q.Close()
 	})
 
-	http.Handle("/search", websocket.Handler(MakeSearchServer(&index)))
+	router.GET("/search", func(c *gin.Context) {
+		websocket.Handler(MakeSearchServer(&index)).ServeHTTP(c.Writer, c.Request)
+	})
 	lastDownloadHandler := 0
 
-	http.Handle("/download_progress", websocket.Handler(func(ws *websocket.Conn) {
-		lastDownloadHandler += 1
-		curDownloadHandler := lastDownloadHandler
-		lastProgresses := make(map[string]int64)
-		handler := func(docset string, received int64, total int64) {
-			if lastProgresses[docset] != received {
-				lastProgresses[docset] = received
-				data, err := json.Marshal(progressReport{docset, received, total})
-				if err == nil {
-					ws.Write(data)
-				}
-				if received >= total {
-					ws.Close()
+	router.GET("/download_progress", func(c *gin.Context) {
+		websocket.Handler(func(ws *websocket.Conn) {
+			lastDownloadHandler += 1
+			curDownloadHandler := lastDownloadHandler
+			lastProgresses := make(map[string]int64)
+			handler := func(docset string, received int64, total int64) {
+				if lastProgresses[docset] != received {
+					lastProgresses[docset] = received
+					data, err := json.Marshal(progressReport{docset, received, total})
+					if err == nil {
+						ws.Write(data)
+					}
+					if received >= total {
+						ws.Close()
+					}
 				}
 			}
-		}
-		downloadProgressHandlers.Lock.Lock()
-		downloadProgressHandlers.Map[curDownloadHandler] = handler
-		downloadProgressHandlers.Lock.Unlock()
+			downloadProgressHandlers.Lock.Lock()
+			downloadProgressHandlers.Map[curDownloadHandler] = handler
+			downloadProgressHandlers.Lock.Unlock()
 
-		input := make([]byte, 1024)
-		for _, err := ws.Read(input); err == nil; _, err = ws.Read(input) {
-		}
+			input := make([]byte, 1024)
+			for _, err := ws.Read(input); err == nil; _, err = ws.Read(input) {
+			}
 
-		downloadProgressHandlers.Lock.Lock()
-		delete(downloadProgressHandlers.Map, curDownloadHandler)
-		downloadProgressHandlers.Lock.Unlock()
-	}))
+			downloadProgressHandlers.Lock.Lock()
+			delete(downloadProgressHandlers.Map, curDownloadHandler)
+			downloadProgressHandlers.Lock.Unlock()
+		}).ServeHTTP(c.Writer, c.Request)
+	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	router.GET("/docs/*path", func(c *gin.Context) {
 		found := false
+		var err error
 		for i, name := range index.DocsetNames {
-			if strings.HasPrefix(r.URL.Path, "/"+name+".docset/") {
-				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
-				err := zealindex.ExtractFile(docsetDbs[i], r.URL.Path[1:], w)
-				if err != nil {
-					w.WriteHeader(404)
-					w.Write([]byte(err.Error()))
+			prefix := "/docs/" + name + ".docset/"
+			if strings.HasPrefix(c.Request.URL.Path, prefix) {
+				c.Writer.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(c.Request.URL.Path)))
+				err = zealindex.ExtractFile(docsetDbs[i], c.Request.URL.Path[len("/docs/"):], c.Writer)
+				if err == nil {
+					found = true
+					break
 				}
-				found = true
 			}
-			if strings.HasPrefix(r.URL.Path, "/"+name+".docbook/") {
-				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
-				f, err := os.Open(docsetDocbooks[i] + r.URL.Path[len("/"+name+".docbook/"):])
-				if err != nil {
-					w.WriteHeader(404)
-					w.Write([]byte(err.Error()))
-				} else {
-					io.Copy(w, f)
+		}
+		if found {
+			return
+		}
+		for i, name := range index.DocsetNames {
+			prefix := "/docs/" + name + ".docbook/"
+			if strings.HasPrefix(c.Request.URL.Path, prefix) && docsetDocbooks[i] != "" {
+				c.Writer.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(c.Request.URL.Path)))
+				f, err := os.Open(docsetDocbooks[i] + c.Request.URL.Path[len(prefix):])
+				if err == nil {
+					io.Copy(c.Writer, f)
+					found = true
+					break
 				}
-				found = true
 			}
 		}
 		if !found {
-			w.WriteHeader(404)
-			w.Write([]byte("Not found."))
+			res := "not found: " + c.Request.URL.Path
+			if err != nil {
+				res += ";error = " + err.Error()
+			}
+			c.Data(404, "text/plain", []byte(res))
 		}
 	})
 
-	err = http.ListenAndServe(":12340", nil)
-	check(err)
+	router.Run(":12340")
 }
