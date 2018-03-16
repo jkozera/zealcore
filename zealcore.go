@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/net/websocket"
+	"io"
 	"io/ioutil"
 	"mime"
 	"net/http"
@@ -84,7 +86,7 @@ type progressReport struct {
 	Total    int64
 }
 
-func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
+func createGlobalIndex() (idx zealindex.GlobalIndex, dbs, docbooks []string) {
 	var all []string
 	var allMunged []string
 	var paths []string
@@ -92,6 +94,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 	var types []string
 	var docsetNames []string
 	var docsetDbs []string
+	var docsetDocbooks []string
 	symbolCounts := make(map[string]map[string]int)
 
 	files, err := ioutil.ReadDir(".")
@@ -116,6 +119,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 		zealindex.ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", f_wal)
 		docsetNames = append(docsetNames, strings.Replace(docsetName, ".docset", "", 1))
 		docsetDbs = append(docsetDbs, name)
+		docsetDocbooks = append(docsetDocbooks, "")
 		f.Close()
 
 		db, err := sql.Open("sqlite3", f.Name())
@@ -142,9 +146,14 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs []string) {
 		i += 1
 	}
 
+	newDocbooks := zealindex.ImportAllDocbooks(&all, &allMunged, &paths, &docsets, &types, &docsetNames)
+	for _, db := range newDocbooks {
+		docsetDocbooks = append(docsetDocbooks, db)
+	}
+
 	fmt.Println(len(all))
 
-	return zealindex.GlobalIndex{&symbolCounts, &all, &allMunged, &paths, &docsets, &types, docsetNames, nil, sync.RWMutex{}}, docsetDbs
+	return zealindex.GlobalIndex{&symbolCounts, &all, &allMunged, &paths, &docsets, &types, docsetNames, nil, sync.RWMutex{}}, docsetDbs, docsetDocbooks
 }
 
 func getRepo(cacheDB *sql.DB) []repoItem {
@@ -202,6 +211,7 @@ func main() {
 
 	var index zealindex.GlobalIndex
 	var docsetDbs []string
+	var docsetDocbooks []string
 
 	var cache *sql.DB
 	var err error
@@ -224,7 +234,7 @@ func main() {
 	}
 	rows.Close()
 
-	index, docsetDbs = createGlobalIndex()
+	index, docsetDbs, docsetDocbooks = createGlobalIndex()
 	index.DocsetIcons = docsetIcons
 
 	http.Handle("/html/", http.FileServer(http.Dir(".")))
@@ -293,8 +303,9 @@ func main() {
 				go (func() {
 					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
 					cache.Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", kapeliItems[item.Id].Id)
-					newIndex, newDocsetDbs := createGlobalIndex()
+					newIndex, newDocsetDbs, newDocsetDocbooks := createGlobalIndex()
 					docsetDbs = newDocsetDbs
+					docsetDocbooks = newDocsetDocbooks
 					docsetIcons[kapeliItems[item.Id].Name] = zealindex.DocsetIcons{kapeliItems[item.Id].Icon, kapeliItems[item.Id].Icon2x}
 					newIndex.DocsetIcons = docsetIcons
 					index.UpdateWith(&newIndex)
@@ -324,6 +335,22 @@ func main() {
 				item.Id = id
 				item.SymbolCounts = (*index.SymbolCounts)[item.Title]
 				items = append(items, item)
+			}
+			for i, docbook := range docsetDocbooks {
+				if docbook != "" {
+					gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
+					gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/Adwaita/16x16/places/start-here.png")
+					var gnomeIcon, gnomeIcon2x string
+					if err == nil {
+						gnomeIcon = base64.StdEncoding.EncodeToString(gnomeIconBytes)
+						gnomeIcon2x = base64.StdEncoding.EncodeToString(gnomeIcon2xBytes)
+					} else {
+						gnomeIcon = ""
+						gnomeIcon2x = ""
+					}
+					newItem := repoItem{"gnome", index.DocsetNames[i], index.DocsetNames[i], []string{}, "", gnomeIcon, gnomeIcon2x, repoItemExtra{""}, index.DocsetNames[i], make(map[string]int)}
+					items = append(items, newItem)
+				}
 			}
 			rows.Close()
 			b, _ := json.Marshal(items)
@@ -401,6 +428,17 @@ func main() {
 				if err != nil {
 					w.WriteHeader(404)
 					w.Write([]byte(err.Error()))
+				}
+				found = true
+			}
+			if strings.HasPrefix(r.URL.Path, "/"+name+".docbook/") {
+				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(r.URL.Path)))
+				f, err := os.Open(docsetDocbooks[i] + r.URL.Path[len("/"+name+".docbook/"):])
+				if err != nil {
+					w.WriteHeader(404)
+					w.Write([]byte(err.Error()))
+				} else {
+					io.Copy(w, f)
 				}
 				found = true
 			}
