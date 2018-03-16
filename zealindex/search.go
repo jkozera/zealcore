@@ -294,7 +294,7 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 
 	returned := 0
 	for sum > returned {
-		if *self.lastQuery != curQuery || returned > 10 {
+		if *self.lastQuery != curQuery || returned > 100 {
 			break
 		}
 		bestIndex := -1

@@ -59,7 +59,7 @@
         });
         var lastQuery = -1;
         ws.onmessage = function(m) {
-            if (results.length < 15) {
+            if (results.length < 101) {
                 if (m.data != " ") {
                     var queryId, title, score, path;
                     try {
