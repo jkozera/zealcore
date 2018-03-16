@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"runtime"
 	"strings"
