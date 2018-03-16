@@ -50,7 +50,7 @@ func LoadDocBook(f *os.File, gz bool) Docbook {
 	return res
 }
 
-func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[]string, docsetNames *[]string) []string {
+func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[]string, docsetNames *[]string) ([]string, []Docbook) {
 	var docBooks []Docbook
 	var docsetDocbooks []string
 	dirs := xdg.DataDirs()
@@ -68,7 +68,7 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 						docBooks = append(docBooks, LoadDocBook(f3, true))
 						docsetDocbooks = append(docsetDocbooks, dir+f.Name()+"/")
 					}
-					if strings.HasSuffix(name, ".devhelp2") {
+					if strings.HasSuffix(name, ".devhelp2") || strings.HasSuffix(name, ".devhelp") {
 						f3, _ := os.Open(dir + f.Name() + "/" + name)
 						docBooks = append(docBooks, LoadDocBook(f3, false))
 						docsetDocbooks = append(docsetDocbooks, dir+f.Name()+"/")
@@ -108,5 +108,5 @@ func ImportAllDocbooks(all, allMunged, paths *[]string, docsets *[]int, types *[
 		}
 	}
 
-	return docsetDocbooks
+	return docsetDocbooks, docBooks
 }

@@ -40,6 +40,7 @@ type repoItem struct {
 	Revision     string
 	Icon         string
 	Icon2x       string
+	Language     string
 	Extra        repoItemExtra
 	Id           string
 	SymbolCounts map[string]int
@@ -86,7 +87,7 @@ type progressReport struct {
 	Total    int64
 }
 
-func createGlobalIndex() (idx zealindex.GlobalIndex, dbs, docbooks []string) {
+func createGlobalIndex() (idx zealindex.GlobalIndex, dbs, docbooks []string, docbooksParsed []zealindex.Docbook) {
 	var all []string
 	var allMunged []string
 	var paths []string
@@ -95,6 +96,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs, docbooks []string) {
 	var docsetNames []string
 	var docsetDbs []string
 	var docsetDocbooks []string
+	var parsedDocbooks []zealindex.Docbook
 	symbolCounts := make(map[string]map[string]int)
 
 	files, err := ioutil.ReadDir(".")
@@ -120,6 +122,7 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs, docbooks []string) {
 		docsetNames = append(docsetNames, strings.Replace(docsetName, ".docset", "", 1))
 		docsetDbs = append(docsetDbs, name)
 		docsetDocbooks = append(docsetDocbooks, "")
+		parsedDocbooks = append(parsedDocbooks, zealindex.Docbook{})
 		f.Close()
 
 		db, err := sql.Open("sqlite3", f.Name())
@@ -146,14 +149,15 @@ func createGlobalIndex() (idx zealindex.GlobalIndex, dbs, docbooks []string) {
 		i += 1
 	}
 
-	newDocbooks := zealindex.ImportAllDocbooks(&all, &allMunged, &paths, &docsets, &types, &docsetNames)
-	for _, db := range newDocbooks {
+	newDocbooks, dbParsed := zealindex.ImportAllDocbooks(&all, &allMunged, &paths, &docsets, &types, &docsetNames)
+	for i, db := range newDocbooks {
 		docsetDocbooks = append(docsetDocbooks, db)
+		parsedDocbooks = append(parsedDocbooks, dbParsed[i])
 	}
 
 	fmt.Println(len(all))
 
-	return zealindex.GlobalIndex{&symbolCounts, &all, &allMunged, &paths, &docsets, &types, docsetNames, nil, sync.RWMutex{}}, docsetDbs, docsetDocbooks
+	return zealindex.GlobalIndex{&symbolCounts, &all, &allMunged, &paths, &docsets, &types, docsetNames, nil, sync.RWMutex{}}, docsetDbs, docsetDocbooks, parsedDocbooks
 }
 
 func getRepo(cacheDB *sql.DB) []repoItem {
@@ -212,6 +216,7 @@ func main() {
 	var index zealindex.GlobalIndex
 	var docsetDbs []string
 	var docsetDocbooks []string
+	var parsedDocbooks []zealindex.Docbook
 
 	var cache *sql.DB
 	var err error
@@ -234,7 +239,7 @@ func main() {
 	}
 	rows.Close()
 
-	index, docsetDbs, docsetDocbooks = createGlobalIndex()
+	index, docsetDbs, docsetDocbooks, parsedDocbooks = createGlobalIndex()
 	index.DocsetIcons = docsetIcons
 
 	http.Handle("/html/", http.FileServer(http.Dir(".")))
@@ -303,9 +308,10 @@ func main() {
 				go (func() {
 					zealindex.ExtractDocs(kapeliItems[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
 					cache.Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", kapeliItems[item.Id].Id)
-					newIndex, newDocsetDbs, newDocsetDocbooks := createGlobalIndex()
+					newIndex, newDocsetDbs, newDocsetDocbooks, newParsedDocbooks := createGlobalIndex()
 					docsetDbs = newDocsetDbs
 					docsetDocbooks = newDocsetDocbooks
+					parsedDocbooks = newParsedDocbooks
 					docsetIcons[kapeliItems[item.Id].Name] = zealindex.DocsetIcons{kapeliItems[item.Id].Icon, kapeliItems[item.Id].Icon2x}
 					newIndex.DocsetIcons = docsetIcons
 					index.UpdateWith(&newIndex)
@@ -345,10 +351,22 @@ func main() {
 						gnomeIcon = base64.StdEncoding.EncodeToString(gnomeIconBytes)
 						gnomeIcon2x = base64.StdEncoding.EncodeToString(gnomeIcon2xBytes)
 					} else {
-						gnomeIcon = ""
+						 gnomeIcon = ""
 						gnomeIcon2x = ""
 					}
-					newItem := repoItem{"gnome", index.DocsetNames[i], index.DocsetNames[i], []string{}, "", gnomeIcon, gnomeIcon2x, repoItemExtra{""}, index.DocsetNames[i], make(map[string]int)}
+					newItem := repoItem{
+						"gnome",
+						index.DocsetNames[i],
+						index.DocsetNames[i],
+						[]string{},
+						"",
+						gnomeIcon,
+						gnomeIcon2x,
+						parsedDocbooks[i].Language,
+						repoItemExtra{""},
+						index.DocsetNames[i],
+						make(map[string]int),
+					}
 					items = append(items, newItem)
 				}
 			}
