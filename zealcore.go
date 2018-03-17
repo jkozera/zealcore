@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/kyoh86/xdg"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/net/websocket"
 	"io/ioutil"
 	"mime"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -83,6 +85,10 @@ func createGlobalIndex(sources []zealindex.DocsRepo) zealindex.GlobalIndex {
 }
 
 func main() {
+	dataDir := xdg.DataHome() + "/zealcore"
+	os.Mkdir(dataDir, 0700)
+	os.Chdir(dataDir)
+
 	var index zealindex.GlobalIndex
 
 	repos := []zealindex.DocsRepo{
@@ -246,6 +252,5 @@ func main() {
 			c.Data(404, "text/plain", []byte(res))
 		}
 	})
-
 	router.Run(":12340")
 }
