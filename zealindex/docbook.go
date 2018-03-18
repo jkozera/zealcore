@@ -174,6 +174,11 @@ type newDocBook struct {
 }
 
 func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
+	*(dr.docBooks) = make([]Docbook, 0)
+	*(dr.names) = make([]string, 0)
+	*(dr.paths) = make([]string, 0)
+	*(dr.symbolCounts) = make(map[string]map[string]int)
+
 	dirs := xdg.DataDirs()
 	dirs = append(dirs, xdg.DataHome())
 
@@ -256,4 +261,8 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 			processKw(c)
 		}
 	}
+}
+
+func (dr DocbooksRepo) RemoveDocset(id string) bool {
+	return false
 }

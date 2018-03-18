@@ -587,3 +587,27 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, typ
 	}
 	rows.Close()
 }
+
+func (d DashRepo) RemoveDocset(id string) bool {
+	q, err := GetCacheDB().Query(
+		"SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id=a.id WHERE a.id = ?",
+		id)
+	if err == nil && q.Next() {
+		var value []byte
+		var item RepoItem
+		q.Scan(&value)
+		json.Unmarshal(value, &item)
+		if os.Remove(item.Title+".zealdocset") == nil {
+			q.Close()
+			_, err := GetCacheDB().Exec("DELETE FROM installed_docs WHERE available_doc_id = ?", id)
+			if err != nil {
+				fmt.Println(err.Error())
+			}
+			return true
+		}
+	}
+	if q != nil {
+		q.Close()
+	}
+	return false
+}

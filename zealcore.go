@@ -157,6 +157,22 @@ func main() {
 			c.Data(500, "text/plain", []byte(err.Error()))
 		}
 	})
+	router.DELETE("/item/:id", func(c *gin.Context) {
+		removed := false
+		for _, repo := range repos {
+			if repo.RemoveDocset(c.Param("id")) {
+				removed = true
+				break
+			}
+		}
+		if removed {
+			newIndex := createGlobalIndex(repos)
+			index.UpdateWith(&newIndex)
+			c.Data(200, "text/plain", []byte("OK"))
+		} else {
+			c.Data(404, "text/plain", []byte("Not found"))
+		}
+	})
 	router.GET("/item", func(c *gin.Context) {
 		var items []zealindex.RepoItem
 
