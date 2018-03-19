@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -126,11 +127,23 @@ func (d DocbooksRepo) GetSymbols(index GlobalIndex, id, tp string) [][]string {
 	return res
 }
 
-func (d DocbooksRepo) GetPage(path string, w io.Writer) error {
+func (d DocbooksRepo) GetPage(qPath string, w io.Writer) error {
 	for i, name := range *d.names {
 		prefix := "/" + name + ".docbook/"
-		if strings.HasPrefix(path, prefix) {
-			f, err := os.Open((*d.paths)[i] + path[len(prefix):])
+		if strings.HasPrefix(qPath, prefix) {
+			f, err := os.Open((*d.paths)[i] + qPath[len(prefix):])
+			if err == nil {
+				_, err := io.Copy(w, f)
+				return err
+			} else {
+				return err
+			}
+		}
+		curPath := (*d.paths)[i]
+		prefix = "/" + path.Base(curPath) + "/"
+		if strings.HasPrefix(qPath, prefix) {
+			// cross-docbook references -- ideally should be a redirect
+			f, err := os.Open((*d.paths)[i] + qPath[len(prefix):])
 			if err == nil {
 				_, err := io.Copy(w, f)
 				return err
