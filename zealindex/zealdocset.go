@@ -291,14 +291,16 @@ func ExtractFile(dbName string, path string, w io.Writer) error {
 			return err
 		}
 	} else {
-		if err != nil {
-			db.Close()
-			return err
-		} else {
+		if res != nil {
 			res.Close()
-			db.Close()
-			return errors.New("not found: " + path)
 		}
+		if db != nil {
+			db.Close()
+		}
+		if err != nil {
+			return err
+		}
+		return errors.New("not found: " + path)
 	}
 }
 
