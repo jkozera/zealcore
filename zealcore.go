@@ -144,7 +144,9 @@ func main() {
 		if err == nil {
 			for _, repo := range repos {
 				installingName := repo.StartDocsetInstallById(item.Id, downloadProgressHandlers, func() {
+					index.Lock.Lock()
 					repo.IndexDocById(index, item.Id)
+					index.Lock.Unlock()
 				})
 				if installingName != "" {
 					c.Data(200, "text/plain", []byte(installingName))
@@ -159,14 +161,12 @@ func main() {
 	router.DELETE("/item/:id", func(c *gin.Context) {
 		removed := false
 		for _, repo := range repos {
-			if repo.RemoveDocset(c.Param("id")) {
+			if repo.RemoveDocset(c.Param("id"), index) {
 				removed = true
 				break
 			}
 		}
 		if removed {
-			newIndex := createGlobalIndex(repos)
-			index.UpdateWith(&newIndex)
 			c.Data(200, "text/plain", []byte("OK"))
 		} else {
 			c.Data(404, "text/plain", []byte("Not found"))

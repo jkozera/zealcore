@@ -41,6 +41,6 @@ type DocsRepo interface {
 	GetSymbols(idx GlobalIndex, id, tp string) [][]string
 	GetChapters(id, path string) [][]string
 	GetPage(path string, w io.Writer) error
-	RemoveDocset(id string) bool
+	RemoveDocset(id string, idx GlobalIndex) bool
 	IndexDocById(idx GlobalIndex, id string)
 }

@@ -271,6 +271,6 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 	}
 }
 
-func (dr DocbooksRepo) RemoveDocset(id string) bool {
+func (dr DocbooksRepo) RemoveDocset(id string, idx GlobalIndex) bool {
 	return false
 }

@@ -377,7 +377,6 @@ func (d DashRepo) GetSymbols(index GlobalIndex, id, tp string) [][]string {
 		if name[0] != d.Name() {
 			continue
 		}
-		fmt.Println(s, tp)
 
 		if s == tp && (name[1] == id) {
 			res = append(res, []string{(*index.All)[i], "docs/" + (*index.Paths)[i]})
@@ -617,21 +616,63 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, typ
 	rows.Close()
 }
 
-func (d DashRepo) RemoveDocset(id string) bool {
+func removeFromIndex(title string, idx GlobalIndex) {
+	var num int
+	for i, name := range *idx.DocsetNames {
+		if name[0] == "com.kapeli" && name[1] == title {
+			num = i
+		}
+	}
+	idx.Lock.Lock()
+
+	oldAll := *idx.All
+	oldAllMunged := *idx.AllMunged
+	oldDocsets := *idx.Docsets
+	oldTypes := *idx.Types
+	oldPaths := *idx.Paths
+
+	var all []string
+	var allMunged []string
+	var docsets []int
+	var types []string
+	var paths []string
+
+	for i := 0; i < len(oldAll); i++ {
+		if oldDocsets[i] != num {
+			all = append(all, oldAll[i])
+			allMunged = append(allMunged, oldAllMunged[i])
+			docsets = append(docsets, oldDocsets[i])
+			types = append(types, oldTypes[i])
+			paths = append(paths, oldPaths[i])
+		}
+	}
+
+	(*idx.All) = all
+	(*idx.AllMunged) = allMunged
+	(*idx.Paths) = paths
+	(*idx.Docsets) = docsets
+	(*idx.Types) = types
+	idx.Lock.Unlock()
+}
+
+func (d DashRepo) RemoveDocset(id string, idx GlobalIndex) bool {
 	q, err := GetCacheDB().Query(
 		"SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id=a.id WHERE a.id = ?",
 		id)
+	var title string
 	if err == nil && q.Next() {
 		var value []byte
 		var item RepoItem
 		q.Scan(&value)
 		json.Unmarshal(value, &item)
+		title = item.Title
 		if os.Remove(item.Title+".zealdocset") == nil {
 			q.Close()
 			_, err := GetCacheDB().Exec("DELETE FROM installed_docs WHERE available_doc_id = ?", id)
 			if err != nil {
 				fmt.Println(err.Error())
 			}
+			removeFromIndex(title, idx)
 			return true
 		}
 	}
