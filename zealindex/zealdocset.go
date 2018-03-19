@@ -484,52 +484,81 @@ func (d DashRepo) ImportAll(idx GlobalIndex) {
 	files, err := ioutil.ReadDir(".")
 	check(err)
 
-	i := 0
 	for _, f := range files {
 		name := f.Name()
 		if !strings.HasSuffix(name, ".zealdocset") {
 			continue
 		}
 
-		f, err := ioutil.TempFile("", "zealdb")
+		d.IndexDocById(idx, name)
 		check(err)
-		f_shm, err := os.Create(f.Name() + "-shm")
-		check(err)
-		f_wal, err := os.Create(f.Name() + "-wal")
-		check(err)
-		docsetName := strings.Replace(name, ".zealdocset", ".docset", 1)
-		check(ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx", f))
-		ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-shm", f_shm)
-		ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", f_wal)
-		shortName := strings.Replace(docsetName, ".docset", "", 1)
-		(*d.docsetNames) = append(*d.docsetNames, shortName)
-		(*idx.DocsetNames) = append(*idx.DocsetNames, []string{d.Name(), shortName})
-		(*d.docsetDbs) = append(*d.docsetDbs, name)
-		f.Close()
-
-		db, err := sql.Open("sqlite3", f.Name())
-
-		if err == nil {
-			ImportRows(db, idx.All, idx.AllMunged, idx.Paths, idx.Docsets, idx.Types, docsetName, i)
-
-			curCounts := make(map[string]int)
-			dbRes, _ := db.Query("SELECT type, COUNT(*) FROM searchIndexView GROUP BY type")
-			for dbRes.Next() {
-				var tp string
-				var count int
-				dbRes.Scan(&tp, &count)
-				curCounts[MapType(tp)] += count
-			}
-			dbRes.Close()
-			(*d.symbolCounts)[strings.Replace(docsetName, ".docset", "", 1)] = curCounts
-			db.Close()
-		}
-		os.Remove(f.Name())
-		os.Remove(f_shm.Name())
-		os.Remove(f_wal.Name())
-		check(err)
-		i += 1
 	}
+}
+
+func (d DashRepo) IndexDocById(idx GlobalIndex, id string) {
+	var err error
+
+	f, err := ioutil.TempFile("", "zealdb")
+	check(err)
+	f_shm, err := os.Create(f.Name() + "-shm")
+	check(err)
+	f_wal, err := os.Create(f.Name() + "-wal")
+	check(err)
+	var docsetName, name string
+
+	if strings.HasSuffix(id, ".zealdocset") {
+		// FIXME use ids for this case as well
+		docsetName = strings.Replace(id, ".zealdocset", ".docset", -1)
+		name = id
+	} else {
+		q, err := GetCacheDB().Query(
+			"SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id=a.id WHERE a.id = ?",
+			id)
+		if err == nil && q.Next() {
+			var value []byte
+			var item RepoItem
+			q.Scan(&value)
+			json.Unmarshal(value, &item)
+			name = item.Title + ".zealdocset"
+			docsetName = item.Title + ".docset"
+			q.Close()
+		}
+	}
+
+	check(ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx", f))
+	ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-shm", f_shm)
+	ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", f_wal)
+	shortName := strings.Replace(docsetName, ".docset", "", 1)
+	(*d.docsetNames) = append(*d.docsetNames, shortName)
+	(*idx.DocsetNames) = append(*idx.DocsetNames, []string{d.Name(), shortName})
+	(*d.docsetDbs) = append(*d.docsetDbs, name)
+	f.Close()
+	f_shm.Close()
+	f_wal.Close()
+
+	db, err := sql.Open("sqlite3", f.Name())
+
+	if err == nil {
+		ImportRows(db, idx.All, idx.AllMunged, idx.Paths, idx.Docsets, idx.Types, docsetName, len(*idx.DocsetNames)-1)
+
+		curCounts := make(map[string]int)
+		dbRes, _ := db.Query("SELECT type, COUNT(*) FROM searchIndexView GROUP BY type")
+		for dbRes.Next() {
+			var tp string
+			var count int
+			dbRes.Scan(&tp, &count)
+			curCounts[MapType(tp)] += count
+		}
+		dbRes.Close()
+		(*d.symbolCounts)[strings.Replace(docsetName, ".docset", "", 1)] = curCounts
+		db.Close()
+	} else {
+		fmt.Println(err.Error())
+	}
+
+	os.Remove(f.Name())
+	os.Remove(f_shm.Name())
+	os.Remove(f_wal.Name())
 }
 
 func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, types *[]string, docsetName string, docsetNum int) {

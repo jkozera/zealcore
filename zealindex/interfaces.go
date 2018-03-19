@@ -42,4 +42,5 @@ type DocsRepo interface {
 	GetChapters(id, path string) [][]string
 	GetPage(path string, w io.Writer) error
 	RemoveDocset(id string) bool
+	IndexDocById(idx GlobalIndex, id string)
 }

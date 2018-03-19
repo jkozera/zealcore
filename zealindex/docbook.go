@@ -173,6 +173,49 @@ type newDocBook struct {
 	name string
 }
 
+func (dr DocbooksRepo) IndexDocById(idx GlobalIndex, id string) {
+	re := regexp.MustCompile("(.*) \\(([^()]+) ([^()]+)\\)")
+
+	for _, d := range *dr.docBooks {
+		if d.Name == id {
+			docsetNum := len(*(idx.DocsetNames))
+			*(idx.DocsetNames) = append(*(idx.DocsetNames), []string{dr.Name(), d.Name})
+			(*dr.symbolCounts)[d.Name] = make(map[string]int)
+			processKw := func(kw DocbookKw) {
+				kwStr := kw.Name
+				typeMatched := ""
+				if re.MatchString(kwStr) {
+					sm := re.FindStringSubmatch(kwStr)
+					if sm[2] != "built-in" {
+						kwStr = sm[2] + "." + sm[1]
+						// replace values like `getv() (GObject.Object method)` with values like `GObject.Object.getv()`
+						// (for consistency with Zeal/Dash)
+					}
+					typeMatched = sm[3]
+				}
+
+				*(idx.All) = append(*(idx.All), kwStr)
+				*(idx.AllMunged) = append(*(idx.AllMunged), Munge(kwStr))
+				*(idx.Docsets) = append(*(idx.Docsets), docsetNum)
+				if typeMatched != "" {
+					*(idx.Types) = append(*(idx.Types), MapType(typeMatched))
+					(*dr.symbolCounts)[d.Name][MapType(typeMatched)] += 1
+				} else {
+					*(idx.Types) = append(*(idx.Types), MapType(kw.Type))
+					(*dr.symbolCounts)[d.Name][MapType(kw.Type)] += 1
+				}
+				*(idx.Paths) = append(*(idx.Paths), d.Name+".docbook/"+kw.Link)
+			}
+			for _, c := range d.Functions {
+				processKw(c)
+			}
+			for _, c := range d.Keywords {
+				processKw(c)
+			}
+		}
+	}
+}
+
 func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 	*(dr.docBooks) = make([]Docbook, 0)
 	*(dr.names) = make([]string, 0)
@@ -223,43 +266,8 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 		(*dr.names) = append((*dr.names), n.name)
 	}
 
-	re := regexp.MustCompile("(.*) \\(([^()]+) ([^()]+)\\)")
-
 	for _, d := range *dr.docBooks {
-		docsetNum := len(*(idx.DocsetNames))
-		*(idx.DocsetNames) = append(*(idx.DocsetNames), []string{dr.Name(), d.Name})
-		(*dr.symbolCounts)[d.Name] = make(map[string]int)
-		processKw := func(kw DocbookKw) {
-			kwStr := kw.Name
-			typeMatched := ""
-			if re.MatchString(kwStr) {
-				sm := re.FindStringSubmatch(kwStr)
-				if sm[2] != "built-in" {
-					kwStr = sm[2] + "." + sm[1]
-					// replace values like `getv() (GObject.Object method)` with values like `GObject.Object.getv()`
-					// (for consistency with Zeal/Dash)
-				}
-				typeMatched = sm[3]
-			}
-
-			*(idx.All) = append(*(idx.All), kwStr)
-			*(idx.AllMunged) = append(*(idx.AllMunged), Munge(kwStr))
-			*(idx.Docsets) = append(*(idx.Docsets), docsetNum)
-			if typeMatched != "" {
-				*(idx.Types) = append(*(idx.Types), MapType(typeMatched))
-				(*dr.symbolCounts)[d.Name][MapType(typeMatched)] += 1
-			} else {
-				*(idx.Types) = append(*(idx.Types), MapType(kw.Type))
-				(*dr.symbolCounts)[d.Name][MapType(kw.Type)] += 1
-			}
-			*(idx.Paths) = append(*(idx.Paths), d.Name+".docbook/"+kw.Link)
-		}
-		for _, c := range d.Functions {
-			processKw(c)
-		}
-		for _, c := range d.Keywords {
-			processKw(c)
-		}
+		dr.IndexDocById(idx, d.Name)
 	}
 }
 

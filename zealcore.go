@@ -144,8 +144,7 @@ func main() {
 		if err == nil {
 			for _, repo := range repos {
 				installingName := repo.StartDocsetInstallById(item.Id, downloadProgressHandlers, func() {
-					newIndex := createGlobalIndex(repos)
-					index.UpdateWith(&newIndex)
+					repo.IndexDocById(index, item.Id)
 				})
 				if installingName != "" {
 					c.Data(200, "text/plain", []byte(installingName))
