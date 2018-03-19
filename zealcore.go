@@ -248,7 +248,7 @@ func main() {
 		}).ServeHTTP(c.Writer, c.Request)
 	})
 
-	router.GET("/docs/*path", func(c *gin.Context) {
+	pathHandler := func(c *gin.Context) {
 		found := false
 		var err error
 		c.Writer.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(c.Request.URL.Path)))
@@ -266,6 +266,10 @@ func main() {
 			}
 			c.Data(404, "text/plain", []byte(res))
 		}
-	})
+	}
+
+	router.GET("/docs/*path", pathHandler)
+	router.GET("/usr/share/gtk-doc/html/*path", pathHandler)
+
 	router.Run(":12340")
 }
