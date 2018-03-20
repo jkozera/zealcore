@@ -12,7 +12,9 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -180,6 +182,10 @@ func main() {
 				items = append(items, docset)
 			}
 		}
+
+		sort.Slice(items, func(i, j int) bool {
+			return strings.Compare(items[i].Name, items[i].Name) < 0
+		})
 
 		b, _ := json.Marshal(items)
 		c.Data(200, "application/json", b)
