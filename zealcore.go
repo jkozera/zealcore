@@ -184,7 +184,7 @@ func main() {
 		}
 
 		sort.Slice(items, func(i, j int) bool {
-			return strings.Compare(items[i].Name, items[i].Name) < 0
+			return strings.Compare(items[i].Name, items[j].Name) < 0
 		})
 
 		b, _ := json.Marshal(items)
