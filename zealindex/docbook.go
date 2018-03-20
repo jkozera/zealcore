@@ -250,8 +250,8 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 				for _, f2 := range files2 {
 					name := f2.Name()
 					if strings.HasSuffix(name, ".devhelp.gz") {
-						count += 1
 						if !found[name] {
+							count += 1
 							go (func(path, path2 string) {
 								f3, _ := os.Open(path)
 								db := LoadDocBook(f3, true)
@@ -261,8 +261,8 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 						found[name] = true
 					}
 					if strings.HasSuffix(name, ".devhelp2") || strings.HasSuffix(name, ".devhelp") {
-						count += 1
 						if !found[name] {
+							count += 1
 							go (func(path, path2 string) {
 								f3, _ := os.Open(path)
 								db := LoadDocBook(f3, false)
