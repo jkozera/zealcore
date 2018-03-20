@@ -123,6 +123,9 @@ func main() {
 			var b []byte
 			items, err := repos[repoId-1].GetAvailableForInstall()
 			if err == nil {
+				sort.Slice(items, func(i, j int) bool {
+					return strings.Compare(items[i].Name, items[j].Name) < 0
+				})
 				b, err = json.Marshal(items)
 			}
 			if err != nil {
