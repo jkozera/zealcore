@@ -240,6 +240,7 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 
 	input := make(chan newDocBook, 16)
 	count := 0
+	found := make(map[string]bool)
 
 	for _, dataDir := range dirs {
 		for _, dir := range []string{dataDir + "/devhelp/books/", dataDir + "/gtk-doc/html/"} {
@@ -250,20 +251,25 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 					name := f2.Name()
 					if strings.HasSuffix(name, ".devhelp.gz") {
 						count += 1
-						go (func(path, path2 string) {
-							f3, _ := os.Open(path)
-							db := LoadDocBook(f3, true)
-							input <- newDocBook{db, path2, db.Name}
-						})(dir+f.Name()+"/"+name, dir+f.Name()+"/")
+						if !found[name] {
+							go (func(path, path2 string) {
+								f3, _ := os.Open(path)
+								db := LoadDocBook(f3, true)
+								input <- newDocBook{db, path2, db.Name}
+							})(dir+f.Name()+"/"+name, dir+f.Name()+"/")
+						}
+						found[name] = true
 					}
 					if strings.HasSuffix(name, ".devhelp2") || strings.HasSuffix(name, ".devhelp") {
 						count += 1
-						go (func(path, path2 string) {
-							f3, _ := os.Open(path)
-							db := LoadDocBook(f3, false)
-							input <- newDocBook{db, path2, db.Name}
-						})(dir+f.Name()+"/"+name, dir+f.Name()+"/")
-						break
+						if !found[name] {
+							go (func(path, path2 string) {
+								f3, _ := os.Open(path)
+								db := LoadDocBook(f3, false)
+								input <- newDocBook{db, path2, db.Name}
+							})(dir+f.Name()+"/"+name, dir+f.Name()+"/")
+						}
+						found[name] = true
 					}
 				}
 			}
