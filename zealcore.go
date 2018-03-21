@@ -280,5 +280,5 @@ func main() {
 	router.GET("/docs/*path", pathHandler)
 	router.GET("/usr/share/gtk-doc/html/*path", pathHandler)
 
-	router.Run(":12340")
+	router.Run("127.0.0.1:12340")
 }
