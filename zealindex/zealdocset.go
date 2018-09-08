@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -603,6 +604,9 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, typ
 	rows, err = db.Query("SELECT name, type, path, coalesce(fragment, '') FROM searchIndexView ORDER BY name ASC")
 	check(err)
 
+	re, err := regexp.Compile("<dash_entry_.*>")
+	check(err)
+
 	for rows.Next() {
 		err = rows.Scan(&col, &tp, &path, &fragment)
 		check(err)
@@ -613,6 +617,8 @@ func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, typ
 		if fragment != "" {
 			fragment = "#" + fragment
 		}
+		path = re.ReplaceAllString(path, "");
+		fragment = re.ReplaceAllString(fragment, "");
 		*paths = append(*paths, docsetName+"/Contents/Resources/Documents/"+path+fragment)
 	}
 	rows.Close()
