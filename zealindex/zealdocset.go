@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"math/rand"
 	"regexp"
 	"runtime"
 	"strings"
@@ -190,12 +191,17 @@ func (r ReaderWithProgress) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func ExtractDocs(title string, f io.Reader, contentType string, size int64, downloadProgressHandlers ProgressHandlers) {
+func ExtractDocs(repoId string, title string, f io.Reader, contentType string, size int64, downloadProgressHandlers ProgressHandlers) {
+	var tr *tar.Reader
 	progressReader := NewReaderWithProgress(f)
 	gz, err := gzip.NewReader(progressReader)
-	check(err)
-
-	tr := tar.NewReader(gz)
+	if err != nil {
+		// try uncompressed?
+		tr = tar.NewReader(progressReader)
+	} else {
+		check(err)
+		tr = tar.NewReader(gz)
+	}
 
 	db, err := sql.Open("sqlite3", title+".zealdocset")
 	check(err)
@@ -261,7 +267,7 @@ func ExtractDocs(title string, f io.Reader, contentType string, size int64, down
 			if progress >= size {
 				progress = size - 1 // don't send 100% until the db is closed
 			}
-			v(title, progress, size)
+			v(repoId, title, progress, size)
 		}
 		downloadProgressHandlers.Lock.RUnlock()
 	}
@@ -305,21 +311,34 @@ func ExtractFile(dbName string, path string, w io.Writer) error {
 	}
 }
 
+func chooseRandomMirror(path string) string {
+	cities := []string{"sanfrancisco", "newyork", "london", "frankfurt", "tokyo", "syndey", "singapore"};
+	city := cities[rand.Int() % len(cities)]
+	return fmt.Sprintf("https://%s.kapeli.com/%s", city, path);
+}
+
 func (d DashRepo) StartDocsetInstallById(id string, downloadProgressHandlers ProgressHandlers, completed func()) string {
 	item, ok := (*d.kapeliItems)[id]
 	if !ok {
 		return ""
 	}
-	resp, err := http.Get("https://go.zealdocs.org/d/com.kapeli/" + item.Name + "/latest")
+	var resp *http.Response
+	var err error
+	if item.SourceId == "com.kapeli.contrib" {
+		resp, err = http.Get(chooseRandomMirror("feeds/zzz/user_contributed/build/" + item.ContribRepoKey + "/" + item.Archive))
+	} else {
+		resp, err = http.Get("https://go.zealdocs.org/d/com.kapeli/" + item.Name + "/latest")
+	}
 	if err == nil {
 		go (func() {
-			ExtractDocs((*d.kapeliItems)[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
-			GetCacheDB().Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", (*d.kapeliItems)[item.Id].Id)
+			ExtractDocs(item.SourceId, (*d.kapeliItems)[item.Id].Title, resp.Body, resp.Header["Content-Type"][0], resp.ContentLength, downloadProgressHandlers)
+			_, err = GetCacheDB().Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", id)
+			check(err)
 			completed()
 			downloadProgressHandlers.Lock.RLock()
 			// report 100% only after new index is created:
 			for _, v := range downloadProgressHandlers.Map {
-				v((*d.kapeliItems)[item.Id].Title, resp.ContentLength, resp.ContentLength)
+				v(item.SourceId, (*d.kapeliItems)[item.Id].Title, resp.ContentLength, resp.ContentLength)
 			}
 			downloadProgressHandlers.Lock.RUnlock()
 		})()
@@ -328,8 +347,8 @@ func (d DashRepo) StartDocsetInstallById(id string, downloadProgressHandlers Pro
 	return ""
 }
 
-func getRepo() []RepoItem {
-	dbRes, _ := GetCacheDB().Query("SELECT id, json FROM available_docs")
+func getRepo(repoId int) []RepoItem {
+	dbRes, _ := GetCacheDB().Query("SELECT id, json FROM available_docs WHERE repo_id = ?", repoId)
 	var items []RepoItem
 	var item RepoItem
 	for dbRes.Next() {
@@ -348,7 +367,11 @@ func (d DashRepo) GetInstalled() []RepoItem {
 	var items []RepoItem
 	var item RepoItem
 	var id string
-	rows, err := GetCacheDB().Query("SELECT id, json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id = a.id")
+	rows, err := GetCacheDB().Query(
+		"SELECT id, json FROM installed_docs i " +
+		"INNER JOIN available_docs a " +
+		"ON i.available_doc_id = a.id " +
+		"WHERE a.repo_id = ?", d.repoId)
 	check(err)
 	var rawJson []byte
 	for rows.Next() {
@@ -402,25 +425,33 @@ func (d DashRepo) GetPage(path string, w io.Writer) error {
 	return errors.New("not found")
 }
 
-func (d DashRepo) updateRepo(updateDbFrom []RepoItem) {
+func (d DashRepo) updateRepo(updateDbFrom *[]RepoItem) {
 	cacheDb := GetCacheDB()
 	if updateDbFrom != nil {
-		cacheDb.Exec("DROP TABLE available_docs")
-		cacheDb.Exec("CREATE TABLE available_docs (id integer primary key autoincrement, repo_id, name, json)")
-		for _, item := range updateDbFrom {
+		cacheDb.Exec("CREATE TABLE IF NOT EXISTS available_docs (id integer primary key autoincrement, repo_id, name, json)")
+		tx, error := cacheDb.Begin()
+		check(error)
+		for i, item := range *updateDbFrom {
 			itemJson, _ := json.Marshal(item)
-			dbRes, err := cacheDb.Query("SELECT id FROM available_docs WHERE name = ?", item.Name)
+			dbRes, err := tx.Query("SELECT id FROM available_docs WHERE name = ?", item.Name)
+			var id string
 			if err == nil && dbRes.Next() {
-				var id string
 				dbRes.Scan(&id)
-				cacheDb.Exec("UPDATE available_docs SET json = ? WHERE id = ?", itemJson, id)
+				tx.Exec("UPDATE available_docs SET json = ? WHERE id = ?", itemJson, id)
 			} else {
-				cacheDb.Exec("INSERT INTO available_docs (repo_id, name, json) VALUES (1, ?, ?)", item.Name, itemJson)
+				tx.Exec("INSERT INTO available_docs (repo_id, name, json) VALUES (?, ?, ?)", d.repoId, item.Name, itemJson)
+				dbRes.Close()
+				dbRes, err := tx.Query("SELECT id FROM available_docs WHERE name = ?", item.Name)
+				if err == nil && dbRes.Next() {
+					dbRes.Scan(&id)
+				}
 			}
+			(*updateDbFrom)[i].Id = id
 			dbRes.Close()
 		}
+		tx.Commit()
 	}
-	items := getRepo()
+	items := getRepo(d.repoId)
 	for _, item := range items {
 		(*d.kapeliItems)[item.Id] = item
 	}
@@ -432,15 +463,16 @@ type DashRepo struct {
 	docsetDbs    *[]string
 	docsetIcons  *map[string]DocsetIcons
 	symbolCounts *map[string]map[string]int
+	repoId       int // 1 - Dash, 2 - user contrib
 }
 
-func NewDashRepo() DashRepo {
+func _NewDashRepo(repoId int) DashRepo {
 	items := make(map[string]RepoItem)
 	var names []string
 	var dbs []string
 	icons := make(map[string]DocsetIcons)
 	counts := make(map[string]map[string]int)
-	res := DashRepo{&items, &names, &dbs, &icons, &counts}
+	res := DashRepo{&items, &names, &dbs, &icons, &counts, repoId}
 	res.GetAvailableForInstall()
 	res.updateRepo(nil)
 
@@ -457,15 +489,23 @@ func NewDashRepo() DashRepo {
 	return res
 }
 
-func (d DashRepo) Name() string {
-	return "com.kapeli"
+func NewDashRepo() DashRepo {
+	return _NewDashRepo(1)
 }
 
-func (d DashRepo) GetAvailableForInstall() ([]RepoItem, error) {
-	repo := getRepo()
-	if len(repo) > 0 {
-		return repo, nil
+func NewDashContribRepo() DashRepo {
+	return _NewDashRepo(2)
+}
+
+func (d DashRepo) Name() string {
+	if d.repoId == 1 {
+		return "com.kapeli"
+	} else {
+		return "com.kapeli.contrib"
 	}
+}
+
+func (d DashRepo) getAvailableForInstallDash() ([]RepoItem, error) {
 	res, err := http.Get("http://api.zealdocs.org/v1/docsets")
 	if err == nil {
 		body, err := ioutil.ReadAll(res.Body)
@@ -474,11 +514,65 @@ func (d DashRepo) GetAvailableForInstall() ([]RepoItem, error) {
 		} else {
 			var items []RepoItem
 			json.Unmarshal(body, &items)
-			d.updateRepo(items)
+			d.updateRepo(&items)
 			return items, nil
 		}
 	} else {
 		return nil, err
+	}
+}
+
+type contribItem struct {
+	Name    string
+	Icon    string
+	Icon2x  string `json:"icon@2x"`
+	Archive string
+}
+
+func (d DashRepo) getAvailableForInstallContrib() ([]RepoItem, error) {
+	res, err := http.Get(chooseRandomMirror("feeds/zzz/user_contributed/build/index.json"))
+	if err == nil {
+		body, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return nil, err
+		} else {
+			var items map[string]map[string]contribItem
+			json.Unmarshal(body, &items)
+			var repoItems []RepoItem
+			for key, item := range items["docsets"] {
+				repoItems = append(repoItems, RepoItem{
+					"com.kapeli.contrib",
+					item.Name,
+					item.Name,
+					make([]string, 0),
+					"",
+					item.Icon,
+					item.Icon2x,
+					"",
+					RepoItemExtra{""},
+					"",
+					item.Archive,
+					key,
+					make(map[string]int),
+				})
+			}
+			d.updateRepo(&repoItems)
+			return repoItems, nil
+		}
+	} else {
+		return nil, err
+	}
+}
+
+func (d DashRepo) GetAvailableForInstall() ([]RepoItem, error) {
+	repo := getRepo(d.repoId)
+	if len(repo) > 0 {
+		return repo, nil
+	}
+	if d.repoId == 1 {
+		return d.getAvailableForInstallDash()
+	} else {
+		return d.getAvailableForInstallContrib()
 	}
 }
 
@@ -492,7 +586,27 @@ func (d DashRepo) ImportAll(idx GlobalIndex) {
 			continue
 		}
 
-		d.IndexDocById(idx, name)
+		res, err := GetCacheDB().Query(
+			"SELECT id, repo_id from available_docs WHERE name=? " +
+				"AND id in (SELECT available_doc_id FROM installed_docs)",
+			strings.Replace(name, ".zealdocset", "", -1),
+		)
+
+		var repoId int
+		var id string
+		check(err)
+		if res.Next() {
+			res.Scan(&id, &repoId)
+			res.Close()
+		} else {
+			res.Close()
+			continue
+		}
+		if repoId != d.repoId {
+			continue
+		}
+
+		d.IndexDocById(idx, id)
 		check(err)
 	}
 }
@@ -502,41 +616,36 @@ func (d DashRepo) IndexDocById(idx GlobalIndex, id string) {
 
 	f, err := ioutil.TempFile("", "zealdb")
 	check(err)
-	f_shm, err := os.Create(f.Name() + "-shm")
+	fShm, err := os.Create(f.Name() + "-shm")
 	check(err)
-	f_wal, err := os.Create(f.Name() + "-wal")
+	fWal, err := os.Create(f.Name() + "-wal")
 	check(err)
 	var docsetName, name string
 
-	if strings.HasSuffix(id, ".zealdocset") {
-		// FIXME use ids for this case as well
-		docsetName = strings.Replace(id, ".zealdocset", ".docset", -1)
-		name = id
-	} else {
-		q, err := GetCacheDB().Query(
-			"SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id=a.id WHERE a.id = ?",
-			id)
-		if err == nil && q.Next() {
-			var value []byte
-			var item RepoItem
-			q.Scan(&value)
-			json.Unmarshal(value, &item)
-			name = item.Title + ".zealdocset"
-			docsetName = item.Title + ".docset"
-			q.Close()
-		}
+	q, err := GetCacheDB().Query(
+		"SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id=a.id WHERE a.id = ?",
+		id)
+	check(err)
+	if q.Next() {
+		var value []byte
+		var item RepoItem
+		q.Scan(&value)
+		json.Unmarshal(value, &item)
+		name = item.Title + ".zealdocset"
+		docsetName = item.Title + ".docset"
+		q.Close()
 	}
 
 	check(ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx", f))
-	ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-shm", f_shm)
-	ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", f_wal)
+	ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-shm", fShm)
+	ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", fWal)
 	shortName := strings.Replace(docsetName, ".docset", "", 1)
 	(*d.docsetNames) = append(*d.docsetNames, shortName)
 	(*idx.DocsetNames) = append(*idx.DocsetNames, []string{d.Name(), shortName})
 	(*d.docsetDbs) = append(*d.docsetDbs, name)
 	f.Close()
-	f_shm.Close()
-	f_wal.Close()
+	fShm.Close()
+	fWal.Close()
 
 	db, err := sql.Open("sqlite3", f.Name())
 
@@ -559,8 +668,8 @@ func (d DashRepo) IndexDocById(idx GlobalIndex, id string) {
 	}
 
 	os.Remove(f.Name())
-	os.Remove(f_shm.Name())
-	os.Remove(f_wal.Name())
+	os.Remove(fShm.Name())
+	os.Remove(fWal.Name())
 }
 
 func ImportRows(db *sql.DB, all, allMunged, paths *[]string, docsets *[]int, types *[]string, docsetName string, docsetNum int) {

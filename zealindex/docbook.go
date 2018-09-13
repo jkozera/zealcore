@@ -82,7 +82,7 @@ func (d DocbooksRepo) StartDocsetInstallById(id string, handlers ProgressHandler
 
 func (d DocbooksRepo) GetInstalled() []RepoItem {
 	gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/gnome/16x16/places/gnome-foot.png")
-	gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/gnome/16x16/places/gnome-foot.png")
+	gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/gnome/32x32/places/gnome-foot.png")
 	var gnomeIcon, gnomeIcon2x string
 	if err == nil {
 		gnomeIcon = base64.StdEncoding.EncodeToString(gnomeIconBytes)
@@ -105,6 +105,8 @@ func (d DocbooksRepo) GetInstalled() []RepoItem {
 				(*d.docBooks)[i].Language,
 				RepoItemExtra{""},
 				(*d.names)[i],
+				"",
+				"",
 				(*d.symbolCounts)[(*d.names)[i]],
 			}
 			items = append(items, newItem)

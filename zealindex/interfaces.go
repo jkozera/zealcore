@@ -10,26 +10,28 @@ type RepoItemExtra struct {
 }
 
 type RepoItem struct {
-	SourceId     string
-	Name         string
-	Title        string
-	Versions     []string
-	Revision     string
-	Icon         string
-	Icon2x       string
-	Language     string
-	Extra        RepoItemExtra
-	Id           string
-	SymbolCounts map[string]int
+	SourceId        string
+	Name            string
+	Title           string
+	Versions        []string
+	Revision        string
+	Icon            string
+	Icon2x          string
+	Language        string
+	Extra           RepoItemExtra
+	Id              string
+	Archive         string
+	ContribRepoKey  string
+	SymbolCounts    map[string]int
 }
 
 type ProgressHandlers struct {
-	Map  map[int]func(string, int64, int64)
+	Map  map[int]func(string, string, int64, int64)
 	Lock sync.RWMutex
 }
 
 func NewProgressHandlers() ProgressHandlers {
-	return ProgressHandlers{make(map[int]func(string, int64, int64)), sync.RWMutex{}}
+	return ProgressHandlers{make(map[int]func(string, string, int64, int64)), sync.RWMutex{}}
 }
 
 type DocsRepo interface {

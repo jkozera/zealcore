@@ -29,6 +29,7 @@ func check(err error) {
 
 type postItem struct {
 	Id string
+	Repo string
 }
 
 func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
@@ -64,6 +65,7 @@ func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
 }
 
 type progressReport struct {
+	RepoId   string
 	Docset   string
 	Received int64
 	Total    int64
@@ -77,7 +79,13 @@ func createGlobalIndex(sources []zealindex.DocsRepo) zealindex.GlobalIndex {
 	var types []string
 	var docsetNames [][]string
 
-	idx := zealindex.GlobalIndex{&all, &allMunged, &paths, &docsets, &types, &docsetNames, sync.RWMutex{}}
+	idx := zealindex.GlobalIndex{&all,
+		&allMunged,
+		&paths,
+		&docsets,
+		&types,
+		&docsetNames,
+		sync.RWMutex{}}
 
 	for _, source := range sources {
 		source.ImportAll(idx)
@@ -95,6 +103,7 @@ func main() {
 
 	repos := []zealindex.DocsRepo{
 		zealindex.NewDashRepo(),
+		zealindex.NewDashContribRepo(),
 		zealindex.NewDocbooksRepo(),
 	}
 	reposByName := make(map[string]zealindex.DocsRepo)
@@ -119,12 +128,13 @@ func main() {
 	})
 	router.GET("/repo/:id/items", func(c *gin.Context) {
 		repoId, err := strconv.Atoi(c.Param("id"))
-		if err == nil && repoId == 1 {
+		if err == nil && repoId < 3 {
 			var b []byte
 			items, err := repos[repoId-1].GetAvailableForInstall()
 			if err == nil {
 				sort.Slice(items, func(i, j int) bool {
-					return strings.Compare(items[i].Name, items[j].Name) < 0
+					return strings.Compare(strings.ToLower(items[i].Name),
+										   strings.ToLower(items[j].Name)) < 0
 				})
 				b, err = json.Marshal(items)
 			}
@@ -148,6 +158,9 @@ func main() {
 		}
 		if err == nil {
 			for _, repo := range repos {
+				if item.Repo != "" && repo.Name() != item.Repo {
+					continue
+				}
 				installingName := repo.StartDocsetInstallById(item.Id, downloadProgressHandlers, func() {
 					index.Lock.Lock()
 					repo.IndexDocById(index, item.Id)
@@ -187,7 +200,9 @@ func main() {
 		}
 
 		sort.Slice(items, func(i, j int) bool {
-			return strings.Compare(items[i].Name, items[j].Name) < 0
+			return strings.Compare(
+				strings.ToLower(items[i].Name),
+				strings.ToLower(items[j].Name)) < 0
 		})
 
 		b, _ := json.Marshal(items)
@@ -231,10 +246,10 @@ func main() {
 			lastDownloadHandler += 1
 			curDownloadHandler := lastDownloadHandler
 			lastProgresses := make(map[string]int64)
-			handler := func(docset string, received int64, total int64) {
+			handler := func(repoId string, docset string, received int64, total int64) {
 				if lastProgresses[docset] != received {
 					lastProgresses[docset] = received
-					data, err := json.Marshal(progressReport{docset, received, total})
+					data, err := json.Marshal(progressReport{repoId, docset, received, total})
 					if err == nil {
 						ws.Write(data)
 					}
