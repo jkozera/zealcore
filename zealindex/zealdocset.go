@@ -312,7 +312,7 @@ func ExtractFile(dbName string, path string, w io.Writer) error {
 }
 
 func chooseRandomMirror(path string) string {
-	cities := []string{"sanfrancisco", "newyork", "london", "frankfurt", "tokyo", "syndey", "singapore"};
+	cities := []string{"sanfrancisco", "newyork", "london", "frankfurt"};
 	city := cities[rand.Int() % len(cities)]
 	return fmt.Sprintf("https://%s.kapeli.com/%s", city, path);
 }
