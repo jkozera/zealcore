@@ -32,6 +32,17 @@ type postItem struct {
 	Repo string
 }
 
+type docsetGroup struct {
+	Name string
+	Icon string
+}
+
+type docsetGroupWithList struct {
+	Name string
+	Icon string
+	DocsList string
+}
+
 func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
 	return func(ws *websocket.Conn) {
 		lastQuery := 0
@@ -208,7 +219,41 @@ func main() {
 		b, _ := json.Marshal(items)
 		c.Data(200, "application/json", b)
 	})
+	router.GET("/group", func(c *gin.Context) {
+		db := zealindex.GetCacheDB()
+		q, err := db.Query("SELECT icon, name, docs_list FROM groups")
+		var groups []docsetGroupWithList
+		for err == nil && q.Next() {
+			var group docsetGroupWithList;
+			q.Scan(&group.Icon, &group.Name, &group.DocsList)
+			groups = append(groups, group)
+		}
+		q.Close()
+		b, _ := json.Marshal(groups)
+		c.Data(200, "application/json", b)
+	})
+	router.POST("/group", func(c *gin.Context) {
+		db := zealindex.GetCacheDB()
+		var group docsetGroup;
+		body, err := ioutil.ReadAll(c.Request.Body)
+		if err == nil {
+			err = json.Unmarshal(body, &group)
+		}
 
+		db.Exec("CREATE TABLE IF NOT EXISTS groups (id integer primary key autoincrement, icon, name, docs_list)")
+		db.Exec("INSERT INTO groups (icon, name) VALUES (?, ?)", group.Icon, group.Name)
+		q, err := db.Query(
+			"SELECT id FROM groups WHERE name=? AND icon=? " +
+			"ORDER BY id DESC LIMIT 1",
+			group.Name, group.Icon,
+		)
+		check(err)
+		q.Next()
+		var id string
+		q.Scan(&id)
+		q.Close()
+		c.Data(200, "text/plain", []byte(id))
+	})
 	router.GET("/item/:docset/:type/*path", func(c *gin.Context) {
 		if c.Param("type") != "symbols" && c.Param("type") != "chapters" {
 			c.Data(404, "text/plain", []byte("Not found: "+c.Param("type")+"."))
