@@ -8,6 +8,7 @@ import (
 	"github.com/kyoh86/xdg"
 	"io"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -166,7 +167,9 @@ func (d DocbooksRepo) GetChapters(id, path string) [][]string {
 			parts := strings.Split(path, "/")
 			for i := 0; i < len(parts); i += 1 {
 				for _, chap2 := range chaps {
-					if chap2.Name == parts[i] {
+					unescaped, err := url.QueryUnescape(parts[i])
+					check(err)
+					if chap2.Name == unescaped {
 						chap = chap2
 						chaps = chap.Subs
 						break
