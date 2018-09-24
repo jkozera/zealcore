@@ -623,13 +623,14 @@ func (d DashRepo) IndexDocById(idx GlobalIndex, id string) {
 	var docsetName, name string
 
 	q, err := GetCacheDB().Query(
-		"SELECT json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id=a.id WHERE a.id = ?",
+		"SELECT available_doc_id, json FROM installed_docs i INNER JOIN available_docs a ON i.available_doc_id=a.id WHERE a.id = ?",
 		id)
 	check(err)
+	var dsid []byte
 	if q.Next() {
 		var value []byte
 		var item RepoItem
-		q.Scan(&value)
+		q.Scan(&dsid, &value)
 		json.Unmarshal(value, &item)
 		name = item.Title + ".zealdocset"
 		docsetName = item.Title + ".docset"
@@ -641,7 +642,7 @@ func (d DashRepo) IndexDocById(idx GlobalIndex, id string) {
 	ExtractFile(name, docsetName+"/Contents/Resources/docSet.dsidx-wal", fWal)
 	shortName := strings.Replace(docsetName, ".docset", "", 1)
 	(*d.docsetNames) = append(*d.docsetNames, shortName)
-	(*idx.DocsetNames) = append(*idx.DocsetNames, []string{d.Name(), shortName})
+	(*idx.DocsetNames) = append(*idx.DocsetNames, []string{d.Name(), shortName, string(dsid)})
 	(*d.docsetDbs) = append(*d.docsetDbs, name)
 	f.Close()
 	fShm.Close()

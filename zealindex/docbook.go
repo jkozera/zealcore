@@ -197,7 +197,7 @@ func (dr DocbooksRepo) IndexDocById(idx GlobalIndex, id string) {
 	for _, d := range *dr.docBooks {
 		if d.Name == id {
 			docsetNum := len(*(idx.DocsetNames))
-			*(idx.DocsetNames) = append(*(idx.DocsetNames), []string{dr.Name(), d.Name})
+			*(idx.DocsetNames) = append(*(idx.DocsetNames), []string{dr.Name(), d.Name, d.Name})
 			(*dr.symbolCounts)[d.Name] = make(map[string]int)
 			processKw := func(kw DocbookKw) {
 				kwStr := kw.Name

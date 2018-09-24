@@ -190,6 +190,7 @@ type Result struct {
 	Path       string
 	RepoName   string
 	DocsetName string
+	DocsetId   string
 }
 
 type GlobalIndex struct {
@@ -264,13 +265,15 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 				if exactIndex != -1 {
 					repo := names[nums[i0+i]][0]
 					name := names[nums[i0+i]][1]
-					res = append(res, Result{-1, scoreExact(exactIndex, len(qMunged), s) + 100, types[i0+1], all[i0+i], paths[i0+i], repo, name})
+					dsid := names[nums[i0+i]][2]
+					res = append(res, Result{-1, scoreExact(exactIndex, len(qMunged), s) + 100, types[i0+1], all[i0+i], paths[i0+i], repo, name, dsid})
 				} else {
 					start, length := matchFuzzy(qMunged, s)
 					if start != -1 {
 						repo := names[nums[i0+i]][0]
 						name := names[nums[i0+i]][1]
-						res = append(res, Result{-1, scoreFuzzy(s, start, length), types[i0+1], all[i0+i], paths[i0+i], repo, name})
+						dsid := names[nums[i0+i]][2]
+						res = append(res, Result{-1, scoreFuzzy(s, start, length), types[i0+1], all[i0+i], paths[i0+i], repo, name, dsid})
 					}
 				}
 			}
@@ -299,7 +302,7 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 			break
 		}
 		bestIndex := -1
-		bestRes := Result{-1, -999999, "", "", "", "", ""}
+		bestRes := Result{-1, -999999, "", "", "", "", "", ""}
 		for i := 0; i < threads; i++ {
 			if indices[i] < len(res[i]) {
 				if CompareRes(res[i][indices[i]], bestRes) {
