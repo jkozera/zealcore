@@ -38,6 +38,7 @@ type docsetGroup struct {
 }
 
 type docsetGroupWithList struct {
+	Id string
 	Name string
 	Icon string
 	DocsList string
@@ -221,11 +222,11 @@ func main() {
 	})
 	router.GET("/group", func(c *gin.Context) {
 		db := zealindex.GetCacheDB()
-		q, err := db.Query("SELECT icon, name, docs_list FROM groups")
-		var groups []docsetGroupWithList
+		q, err := db.Query("SELECT id, icon, name, docs_list FROM groups")
+		groups := make([]docsetGroupWithList, 0)
 		for err == nil && q.Next() {
-			var group docsetGroupWithList;
-			q.Scan(&group.Icon, &group.Name, &group.DocsList)
+			var group docsetGroupWithList
+			q.Scan(&group.Id, &group.Icon, &group.Name, &group.DocsList)
 			groups = append(groups, group)
 		}
 		q.Close()
@@ -234,7 +235,7 @@ func main() {
 	})
 	router.POST("/group", func(c *gin.Context) {
 		db := zealindex.GetCacheDB()
-		var group docsetGroup;
+		var group docsetGroup
 		body, err := ioutil.ReadAll(c.Request.Body)
 		if err == nil {
 			err = json.Unmarshal(body, &group)
@@ -253,6 +254,45 @@ func main() {
 		q.Scan(&id)
 		q.Close()
 		c.Data(200, "text/plain", []byte(id))
+	})
+	router.GET("/group/:id/doc", func(c *gin.Context) {
+		db := zealindex.GetCacheDB()
+		q, err := db.Query(
+			"SELECT docs_list FROM groups WHERE id=?", c.Param("id"),
+		)
+		check(err)
+		if q.Next() {
+			var docsList string
+			q.Scan(&docsList)
+			c.Data(200, "text/plain", []byte(docsList))
+		} else {
+			c.Data(404, "text/plain", []byte("Not found"))
+		}
+		q.Close()
+	})
+	router.POST("/group/:id/doc", func(c *gin.Context) {
+		db := zealindex.GetCacheDB()
+		q, err := db.Query(
+			"SELECT docs_list FROM groups WHERE id=?", c.Param("id"),
+		)
+		check(err)
+		if q.Next() {
+			var docsList string
+			q.Scan(&docsList)
+			q.Close()
+			name, _ := ioutil.ReadAll(c.Request.Body)
+			if docsList == "" {
+				docsList = string(name)
+			} else {
+				docsList += "," + string(name)
+			}
+			db.Exec("UPDATE groups SET docs_list = ? WHERE id = ?",
+					docsList, c.Param("id"))
+			c.Data(200, "text/plain", []byte(docsList))
+		} else {
+			q.Close()
+			c.Data(404, "text/plain", []byte("Not found"))
+		}
 	})
 	router.GET("/item/:docset/:type/*path", func(c *gin.Context) {
 		if c.Param("type") != "symbols" && c.Param("type") != "chapters" {
