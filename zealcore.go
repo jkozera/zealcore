@@ -255,6 +255,26 @@ func main() {
 		q.Close()
 		c.Data(200, "text/plain", []byte(id))
 	})
+	router.POST("/group/:id/doc/:docset", func(c *gin.Context) {
+		db := zealindex.GetCacheDB()
+		q, err := db.Query(
+			"SELECT docs_list FROM groups WHERE id=?", c.Param("id"),
+		)
+		check(err)
+		if q.Next() {
+			var docsList string
+			q.Scan(&docsList)
+			q.Close()
+			oldList := strings.Split(docsList, ",");
+			newList := append(oldList, c.Param("docset"))
+			newStr := strings.Join(newList, ",")
+			db.Exec("UPDATE groups SET docs_list = ? WHERE id = ?",
+				newStr, c.Param("id"))
+		} else {
+			q.Close()
+		}
+		c.Data(204, "", []byte(""));
+	})
 	router.GET("/group/:id/doc", func(c *gin.Context) {
 		db := zealindex.GetCacheDB()
 		q, err := db.Query(
@@ -293,6 +313,35 @@ func main() {
 			q.Close()
 			c.Data(404, "text/plain", []byte("Not found"))
 		}
+	})
+	router.DELETE("/group/:id/doc/:docset", func(c *gin.Context) {
+		db := zealindex.GetCacheDB()
+		q, err := db.Query(
+			"SELECT docs_list FROM groups WHERE id=?", c.Param("id"),
+		)
+		check(err)
+		if q.Next() {
+			var docsList string
+			q.Scan(&docsList)
+			q.Close()
+			oldList := strings.Split(docsList, ",");
+			var newList []string;
+			for i := 0; i < len(oldList); i += 1 {
+				if oldList[i] != c.Param("docset") {
+					newList = append(newList, oldList[i])
+				}
+			}
+			newStr := strings.Join(newList, ",")
+			if newStr == "" {
+				db.Exec("DELETE FROM groups WHERE id = ?", c.Param("id"));
+			} else {
+				db.Exec("UPDATE groups SET docs_list = ? WHERE id = ?",
+					newStr, c.Param("id"))
+			}
+		} else {
+			q.Close()
+		}
+		c.Data(204, "", []byte(""));
 	})
 	router.GET("/item/:docset/:type/*path", func(c *gin.Context) {
 		if c.Param("type") != "symbols" && c.Param("type") != "chapters" {
