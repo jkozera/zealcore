@@ -44,7 +44,26 @@ type docsetGroupWithList struct {
 	DocsList string
 }
 
-func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
+func MakeSearchServer(index *zealindex.GlobalIndex, groupId string) func(*websocket.Conn) {
+	var allowedDocs map[string]bool
+	if groupId == "*" {
+		allowedDocs = nil
+	} else {
+		allowedDocs = make(map[string]bool)
+		q, err := zealindex.GetCacheDB().Query(
+			"SELECT docs_list FROM groups WHERE id=?", groupId,
+		)
+		check(err)
+		if q.Next() {
+			var docsList string
+			q.Scan(&docsList)
+			q.Close()
+			splitted := strings.Split(docsList, ",")
+			for i := 0; i < len(splitted); i++ {
+				allowedDocs[splitted[i]] = true
+			}
+		}
+	}
 	return func(ws *websocket.Conn) {
 		lastQuery := 0
 		searcher := zealindex.NewSearcher(index, &lastQuery)
@@ -71,7 +90,8 @@ func MakeSearchServer(index *zealindex.GlobalIndex) func(*websocket.Conn) {
 				ws.Write([]byte(strconv.Itoa(curQuery) + ";" + fmt.Sprint(t)))
 			}
 
-			go zealindex.SearchAllDocs(&searcher, inStr, resultCb, timeCb)
+
+			go zealindex.SearchAllDocs(&searcher, inStr, allowedDocs, resultCb, timeCb)
 		}
 	}
 }
@@ -371,7 +391,10 @@ func main() {
 	})
 
 	router.GET("/search", func(c *gin.Context) {
-		websocket.Handler(MakeSearchServer(&index)).ServeHTTP(c.Writer, c.Request)
+		websocket.Handler(MakeSearchServer(&index, "*")).ServeHTTP(c.Writer, c.Request)
+	})
+	router.GET("/search/group/:groupid", func(c *gin.Context) {
+		websocket.Handler(MakeSearchServer(&index, c.Param("groupid"))).ServeHTTP(c.Writer, c.Request)
 	})
 	lastDownloadHandler := 0
 

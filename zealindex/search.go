@@ -232,7 +232,7 @@ func CompareRes(a, b Result) bool {
 	}
 }
 
-func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb func(int, time.Duration)) {
+func SearchAllDocs(self *searcher, inStr string, allowedDocs map[string]bool, resultCb func(Result), timeCb func(int, time.Duration)) {
 	curQuery := *self.lastQuery + 1
 	*self.lastQuery = curQuery
 
@@ -260,6 +260,9 @@ func SearchAllDocs(self *searcher, inStr string, resultCb func(Result), timeCb f
 			for i, s := range allMunged[i0:i1] {
 				if *self.lastQuery != curQuery {
 					break
+				}
+				if allowedDocs != nil && !allowedDocs[names[nums[i0+i]][2]] {
+					continue
 				}
 				exactIndex := strings.Index(s, qMunged)
 				if exactIndex != -1 {
