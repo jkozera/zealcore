@@ -248,8 +248,8 @@ func main() {
 			var group docsetGroupWithList
 			q.Scan(&group.Id, &group.Icon, &group.Name, &group.DocsList)
 			groups = append(groups, group)
+			q.Close()
 		}
-		q.Close()
 		b, _ := json.Marshal(groups)
 		c.Data(200, "application/json", b)
 	})
