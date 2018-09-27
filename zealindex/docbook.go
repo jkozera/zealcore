@@ -298,3 +298,7 @@ func (dr DocbooksRepo) ImportAll(idx GlobalIndex) {
 func (dr DocbooksRepo) RemoveDocset(id string, idx GlobalIndex) bool {
 	return false
 }
+
+func (d DocbooksRepo) StartDocsetInstallByIo(iostream io.ReadCloser, repoItem RepoItem, len int64, downloadProgressHandlers ProgressHandlers, completed func()) string {
+	return ""
+}

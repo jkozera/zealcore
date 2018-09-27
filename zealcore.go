@@ -136,6 +136,7 @@ func main() {
 	repos := []zealindex.DocsRepo{
 		zealindex.NewDashRepo(),
 		zealindex.NewDashContribRepo(),
+		zealindex.NewDashLocalRepo(),
 		zealindex.NewDocbooksRepo(),
 	}
 	reposByName := make(map[string]zealindex.DocsRepo)
@@ -206,6 +207,66 @@ func main() {
 			c.Data(404, "text/plain", []byte("not found"))
 		} else {
 			c.Data(500, "text/plain", []byte(err.Error()))
+		}
+	})
+	router.POST("/item/local/:title/:len", func(c *gin.Context) {
+		for _, repo := range repos {
+			if repo.Name() != "com.kapeli.local" {
+				continue
+			}
+			len, err := strconv.ParseInt(c.Param("len"), 10, 64)
+			icon := c.Request.FormValue("icon")
+			icon2x := c.Request.FormValue("icon2x")
+
+			repoItem := zealindex.RepoItem{
+				"com.kapeli.local",
+				c.Param("title"),
+				c.Param("title"),
+				make([]string, 0),
+				"local",
+				string(icon),
+				string(icon2x),
+				"",
+				zealindex.RepoItemExtra{""},
+				"",
+				"",
+				"",
+				make(map[string]int),
+			}
+			marshaled, err := json.Marshal(repoItem)
+			check(err)
+			_, err = zealindex.GetCacheDB().Exec(
+				"INSERT INTO available_docs(repo_id, name, json) VALUES (?, ?, ?)",
+				3, c.Param("title"), marshaled)
+			q, err := zealindex.GetCacheDB().Query("SELECT id FROM available_docs WHERE repo_id=3 ORDER BY id DESC LIMIT 1")
+			check(err)
+			q.Next()
+			q.Scan(&repoItem.Id)
+			q.Close()
+			tmpBody, err := ioutil.TempFile("/tmp", "zealcore-data")
+			buf := make([]byte, 1024)
+			more := true
+			f, _, e := c.Request.FormFile("file")
+			check(e)
+			for more {
+				r, err := f.Read(buf)
+				tmpBody.Write(buf[:r])
+				if r == 0 || err != nil {
+					more = false
+				}
+			}
+			tmpBody.Seek(0, 0)
+			installingName := repo.StartDocsetInstallByIo(
+				tmpBody, repoItem, len,
+				downloadProgressHandlers, func() {
+					index.Lock.Lock()
+					repo.IndexDocById(index, repoItem.Id)
+					index.Lock.Unlock()
+				})
+			if installingName != "" {
+				c.Data(200, "text/plain", []byte(installingName))
+				return
+			}
 		}
 	})
 	router.DELETE("/item/:id", func(c *gin.Context) {

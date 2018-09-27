@@ -347,6 +347,24 @@ func (d DashRepo) StartDocsetInstallById(id string, downloadProgressHandlers Pro
 	return ""
 }
 
+
+func (d DashRepo) StartDocsetInstallByIo(iostream io.ReadCloser, repoItem RepoItem, len int64, downloadProgressHandlers ProgressHandlers, completed func()) string {
+	go (func() {
+		(*d.kapeliItems)[repoItem.Id] = repoItem
+		ExtractDocs("com.kapeli.local", repoItem.Title, iostream, "", len, downloadProgressHandlers)
+		_, err := GetCacheDB().Exec("INSERT INTO installed_docs(available_doc_id) VALUES (?)", repoItem.Id)
+		check(err)
+		completed()
+		downloadProgressHandlers.Lock.RLock()
+		// report 100% only after new index is created:
+		for _, v := range downloadProgressHandlers.Map {
+			v("com.kapeli.local", (*d.kapeliItems)[repoItem.Id].Title, len, len)
+		}
+		downloadProgressHandlers.Lock.RUnlock()
+	})()
+	return repoItem.Title
+}
+
 func getRepo(repoId int) []RepoItem {
 	dbRes, _ := GetCacheDB().Query("SELECT id, json FROM available_docs WHERE repo_id = ?", repoId)
 	var items []RepoItem
@@ -463,7 +481,7 @@ type DashRepo struct {
 	docsetDbs    *[]string
 	docsetIcons  *map[string]DocsetIcons
 	symbolCounts *map[string]map[string]int
-	repoId       int // 1 - Dash, 2 - user contrib
+	repoId       int // 1 - Dash, 2 - user contrib, 3 - local
 }
 
 func _NewDashRepo(repoId int) DashRepo {
@@ -497,11 +515,17 @@ func NewDashContribRepo() DashRepo {
 	return _NewDashRepo(2)
 }
 
+func NewDashLocalRepo() DashRepo {
+	return _NewDashRepo(3)
+}
+
 func (d DashRepo) Name() string {
 	if d.repoId == 1 {
 		return "com.kapeli"
-	} else {
+	} else if d.repoId == 2 {
 		return "com.kapeli.contrib"
+	} else {
+		return "com.kapeli.local"
 	}
 }
 
@@ -522,7 +546,7 @@ func (d DashRepo) getAvailableForInstallDash() ([]RepoItem, error) {
 	}
 }
 
-type contribItem struct {
+type ContribItem struct {
 	Name    string
 	Icon    string
 	Icon2x  string `json:"icon@2x"`
@@ -536,7 +560,7 @@ func (d DashRepo) getAvailableForInstallContrib() ([]RepoItem, error) {
 		if err != nil {
 			return nil, err
 		} else {
-			var items map[string]map[string]contribItem
+			var items map[string]map[string]ContribItem
 			json.Unmarshal(body, &items)
 			var repoItems []RepoItem
 			for key, item := range items["docsets"] {

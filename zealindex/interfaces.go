@@ -40,6 +40,7 @@ type DocsRepo interface {
 	GetInstalled() []RepoItem
 	GetAvailableForInstall() ([]RepoItem, error)
 	StartDocsetInstallById(id string, handlers ProgressHandlers, completed func()) string
+	StartDocsetInstallByIo(iostream io.ReadCloser, repoItem RepoItem, len int64, handlers ProgressHandlers, completed func()) string
 	GetSymbols(idx GlobalIndex, id, tp string) [][]string
 	GetChapters(id, path string) [][]string
 	GetPage(path string, w io.Writer) error
