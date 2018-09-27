@@ -82,8 +82,16 @@ func (d DocbooksRepo) StartDocsetInstallById(id string, handlers ProgressHandler
 }
 
 func (d DocbooksRepo) GetInstalled() []RepoItem {
-	gnomeIconBytes, err := ioutil.ReadFile("/usr/share/icons/gnome/16x16/places/gnome-foot.png")
-	gnomeIcon2xBytes, err := ioutil.ReadFile("/usr/share/icons/gnome/32x32/places/gnome-foot.png")
+	var gnomeIconBytes, gnomeIcon2xBytes []byte
+	var err error
+	if _, err := os.Stat("/app/share/icons/gnome/16x16/places/gnome-foot.png"); os.IsNotExist(err) {
+		gnomeIconBytes, err = ioutil.ReadFile("/usr/share/icons/gnome/16x16/places/gnome-foot.png")
+		gnomeIcon2xBytes, err = ioutil.ReadFile("/usr/share/icons/gnome/32x32/places/gnome-foot.png")
+	} else {
+		gnomeIconBytes, err = ioutil.ReadFile("/app/share/icons/gnome/16x16/places/gnome-foot.png")
+		gnomeIcon2xBytes, err = ioutil.ReadFile("/app/share/icons/gnome/32x32/places/gnome-foot.png")
+
+	}
 	var gnomeIcon, gnomeIcon2x string
 	if err == nil {
 		gnomeIcon = base64.StdEncoding.EncodeToString(gnomeIconBytes)
